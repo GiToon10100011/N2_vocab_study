@@ -38,13 +38,19 @@ export async function fetchTodayCounts(today: string): Promise<TodayCounts> {
 }
 
 /** 학습일 그룹 목록. N일차 / N주차는 가장 이른 학습일을 기준으로 매긴다. */
-export async function fetchStudyDays(): Promise<StudyDayGroup[]> {
+export async function fetchStudyDays(today: string): Promise<StudyDayGroup[]> {
   const rows = (await db().query(
-    `select to_char(study_day, 'YYYY-MM-DD') as study_day, count(*)::int as total
+    `select to_char(study_day, 'YYYY-MM-DD')                                as study_day,
+            count(*)::int                                                   as total,
+            count(*) filter (where suspended = false
+                               and stage > 0
+                               and next_review <= $1::date)::int            as due_today,
+            count(*) filter (where suspended = false and stage = 0)::int    as new_count
        from words
       group by study_day
       order by study_day asc`,
-  )) as { study_day: string; total: number }[];
+    [today],
+  )) as { study_day: string; total: number; due_today: number; new_count: number }[];
 
   if (rows.length === 0) return [];
   const first = rows[0].study_day;
@@ -53,6 +59,8 @@ export async function fetchStudyDays(): Promise<StudyDayGroup[]> {
     dayIndex: i + 1,
     weekIndex: Math.floor(diffDays(r.study_day, first) / 7) + 1,
     total: r.total,
+    dueToday: r.due_today,
+    newCount: r.new_count,
   }));
 }
 
@@ -137,6 +145,17 @@ export async function fetchRecentlyAdded(limit = 20): Promise<Word[]> {
   const rows = await db().query(
     `select ${WORD_COLS} from words order by created_at desc limit $1`,
     [limit],
+  );
+  return rows as unknown as Word[];
+}
+
+/** 학습일 범위로 단어를 가져온다. 일차 퀴즈(from == to)와 주차 퀴즈 모두 이걸로 처리한다. */
+export async function fetchWordsInRange(from: string, to: string): Promise<Word[]> {
+  const rows = await db().query(
+    `select ${WORD_COLS} from words
+      where suspended = false and study_day between $1::date and $2::date
+      order by created_at asc`,
+    [from, to],
   );
   return rows as unknown as Word[];
 }

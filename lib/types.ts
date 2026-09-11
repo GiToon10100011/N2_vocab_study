@@ -55,6 +55,10 @@ export interface StudyDayGroup {
   dayIndex: number;
   weekIndex: number;
   total: number;
+  /** 이 그룹에서 오늘 SRS 주기상 복습이 걸린 개수 */
+  dueToday: number;
+  /** 이 그룹에서 아직 한 번도 학습하지 않은 개수 */
+  newCount: number;
 }
 
 export interface QueueCard {

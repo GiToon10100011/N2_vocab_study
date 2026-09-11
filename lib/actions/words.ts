@@ -54,5 +54,5 @@ export async function suspendWordAction(id: string): Promise<void> {
 
 /** 학습일 그룹 목록(N일차 / N주차). 입력 화면에서 현재 몇 일차인지 보여주는 데 쓴다. */
 export async function listStudyDaysAction(): Promise<StudyDayGroup[]> {
-  return fetchStudyDays();
+  return fetchStudyDays(studyDate());
 }

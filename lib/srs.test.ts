@@ -4,6 +4,7 @@ import {
   MAX_STAGE,
   addDays,
   allowedTypes,
+  buildPracticeQueue,
   buildQueue,
   diffDays,
   gradeWord,
@@ -310,5 +311,51 @@ describe("학습일 경계 시각", () => {
     // 그 직전/직후가 각각 전날/당일로 집계되는지 교차 확인
     expect(studyDate(new Date(start.getTime() - 1), "Asia/Seoul")).toBe("2026-09-10");
     expect(studyDate(start, "Asia/Seoul")).toBe("2026-09-11");
+  });
+});
+
+describe("연습 퀴즈 큐", () => {
+  const readingCounts = {};
+  const words = Array.from({ length: 8 }, (_, i) =>
+    word({ id: `w${i}`, surface: `語${i}`, reading: `ご${i}`, stage: i % 8 }),
+  );
+
+  it("단어당 카드 하나이고 학습 카드는 없다", () => {
+    const q = buildPracticeQueue({ words, readingCounts, rand: () => 0.5 });
+    expect(q).toHaveLength(words.length);
+    expect(q.some((c) => c.kind === "learn")).toBe(false);
+    expect(new Set(q.map((c) => c.word.id)).size).toBe(words.length);
+  });
+
+  it("돌릴 때마다 순서가 달라진다", () => {
+    const a = buildPracticeQueue({ words, readingCounts }).map((c) => c.word.id);
+    const orders = new Set<string>();
+    for (let i = 0; i < 30; i++) {
+      orders.add(buildPracticeQueue({ words, readingCounts }).map((c) => c.word.id).join(","));
+    }
+    expect(orders.size).toBeGreaterThan(1);
+    expect(a).toHaveLength(words.length);
+  });
+
+  it("보류한 단어는 빠진다", () => {
+    const q = buildPracticeQueue({
+      words: [...words, word({ id: "sus", suspended: true })],
+      readingCounts,
+      rand: () => 0.5,
+    });
+    expect(q.some((c) => c.word.id === "sus")).toBe(false);
+  });
+
+  it("가나 전용/동음 충돌 예외는 연습에서도 그대로 지켜진다", () => {
+    const special = [
+      word({ id: "kana", surface: "ちゃんと", reading: "ちゃんと" }),
+      word({ id: "h1", surface: "以外", reading: "いがい" }),
+      word({ id: "h2", surface: "意外", reading: "いがい" }),
+    ];
+    for (let i = 0; i < 50; i++) {
+      const q = buildPracticeQueue({ words: special, readingCounts: { いがい: 2 } });
+      expect(q.find((c) => c.word.id === "kana")!.kind).toBe("s2m");
+      expect(q.filter((c) => c.word.surface === "以外")[0].kind).not.toBe("r2m");
+    }
   });
 });

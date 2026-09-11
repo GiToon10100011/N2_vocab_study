@@ -85,6 +85,11 @@ button {
   cursor: pointer;
 }
 
+/* 홈 화면에서 실행(standalone)했을 때 하단 인디케이터 영역을 피한다 */
+.safe-b {
+  padding-bottom: max(0px, env(safe-area-inset-bottom));
+}
+
 /* 세션 중에는 텍스트가 선택되어 정답이 드러나지 않게 한다 */
 .no-select {
   -webkit-user-select: none;

@@ -104,7 +104,7 @@ export function AddForm({
             setDays((prev) =>
               prev.some((g) => g.study_day === d)
                 ? prev.map((g) => (g.study_day === d ? { ...g, total: g.total + 1 } : g))
-                : [...prev, { study_day: d, dayIndex: 0, weekIndex: 0, total: 1 }].sort((a, b) =>
+                : [...prev, { study_day: d, dayIndex: 0, weekIndex: 0, total: 1, dueToday: 0, newCount: 1 }].sort((a, b) =>
                     a.study_day.localeCompare(b.study_day),
                   ),
             );

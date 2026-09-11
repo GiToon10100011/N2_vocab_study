@@ -13,6 +13,9 @@ export type SessionCard = QueueCard & { retry?: boolean };
 
 export function CardFace({ card, revealed }: { card: SessionCard; revealed: boolean }) {
   const w = card.word;
+  // 가나만으로 쓰는 단어(きっかけ, バランス)는 표기와 읽기가 같다.
+  // 같은 글자를 두 번 보여줘도 정보가 늘지 않으므로 한 줄만 낸다.
+  const kanaOnly = w.surface === w.reading;
 
   if (card.kind === "learn") {
     return (
@@ -20,9 +23,11 @@ export function CardFace({ card, revealed }: { card: SessionCard; revealed: bool
         <div className="jp-xl" lang="ja">
           {w.surface}
         </div>
-        <div className="jp-lg text-fg" lang="ja">
-          {w.reading}
-        </div>
+        {!kanaOnly && (
+          <div className="jp-lg text-fg" lang="ja">
+            {w.reading}
+          </div>
+        )}
         <div className="text-2xl text-muted">{w.meaning_ko}</div>
       </div>
     );
@@ -64,9 +69,11 @@ export function CardFace({ card, revealed }: { card: SessionCard; revealed: bool
     return (
       <div className="flex flex-col items-center gap-5">
         <div className="text-3xl font-semibold">{w.meaning_ko}</div>
-        <div className="jp-md text-muted" lang="ja">
-          {w.reading}
-        </div>
+        {!kanaOnly && (
+          <div className="jp-md text-muted" lang="ja">
+            {w.reading}
+          </div>
+        )}
         <div className="jp-lg" lang="ja">
           {w.surface}
         </div>

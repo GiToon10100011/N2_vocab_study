@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { RETRY_GAP } from "@/lib/srs";
-import { suspendWordAction } from "@/lib/actions/words";
+import { suspendWordAction, updateWordAction } from "@/lib/actions/words";
+import { hasNonKana, normalizeReading } from "@/lib/kana";
 import { CardFace, type SessionCard } from "./CardFace";
 import type { GradeInput, PromptType, QueueCard, QueueWord } from "@/lib/types";
 
@@ -12,17 +13,25 @@ const FAILED_KEY = "n2v_pending_grades";
 
 /* ---------- 전송 실패분 보관 (네트워크가 끊겨도 채점을 잃지 않는다) ---------- */
 
-function loadFailed(): GradeInput[] {
+/** 세션 종류(연습 여부)가 배치마다 다를 수 있으므로 배치 단위로 보관한다. */
+interface PendingBatch {
+  practice: boolean;
+  grades: GradeInput[];
+}
+
+function loadFailed(): PendingBatch[] {
   try {
     const raw = localStorage.getItem(FAILED_KEY);
-    return raw ? (JSON.parse(raw) as GradeInput[]) : [];
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as PendingBatch[]).filter((b) => b?.grades?.length) : [];
   } catch {
     return [];
   }
 }
-function saveFailed(batch: GradeInput[]) {
+function saveFailed(batches: PendingBatch[]) {
   try {
-    localStorage.setItem(FAILED_KEY, JSON.stringify(batch.slice(-500)));
+    localStorage.setItem(FAILED_KEY, JSON.stringify(batches.slice(-20)));
   } catch {
     /* 저장 실패는 무시 */
   }
@@ -40,6 +49,7 @@ interface Handlers {
   grade(correct: boolean): void;
   undo(): void;
   suspend(): void;
+  edit(): void;
 }
 
 interface Snapshot {
@@ -70,49 +80,53 @@ export function StudySession({
   const [finished, setFinished] = useState(false);
   const [canUndo, setCanUndo] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState(false);
 
   const pendingRef = useRef<GradeInput[]>([]);
   const snapsRef = useRef<Snapshot[]>([]);
   const retryCountRef = useRef(0);
 
   /** 순수 전송. 상태를 건드리지 않으므로 effect 안에서도 안전하다. */
-  const sendGrades = useCallback(async (batch: GradeInput[], keepalive = false) => {
-    if (batch.length === 0) return;
+  const sendBatches = useCallback(async (batches: PendingBatch[], keepalive = false) => {
+    const pending = batches.filter((b) => b.grades.length > 0);
+    if (pending.length === 0) return;
     clearFailed();
-    try {
-      const res = await fetch("/api/grades", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ grades: batch }),
-        keepalive,
-      });
-      if (!res.ok) throw new Error(String(res.status));
-    } catch {
-      saveFailed(batch);
+    const failed: PendingBatch[] = [];
+    for (const batch of pending) {
+      try {
+        const res = await fetch("/api/grades", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ grades: batch.grades, practice: batch.practice }),
+          keepalive,
+        });
+        if (!res.ok) throw new Error(String(res.status));
+      } catch {
+        failed.push(batch);
+      }
     }
+    if (failed.length > 0) saveFailed(failed);
   }, []);
 
   /** 모아둔 채점을 비우고 보낸다. 되돌리기는 여기서 끝난다. */
   const flushPending = useCallback(
     (keepalive = false) => {
-      const batch = [...loadFailed(), ...pendingRef.current];
+      const mine = pendingRef.current;
       pendingRef.current = [];
       snapsRef.current = [];
-      void sendGrades(batch, keepalive);
+      void sendBatches([...loadFailed(), { practice, grades: mine }], keepalive);
     },
-    [sendGrades],
+    [sendBatches, practice],
   );
 
   // 지난 세션에서 못 보낸 채점이 있으면 먼저 올린다.
   useEffect(() => {
-    if (practice) return;
     const failed = loadFailed();
-    if (failed.length > 0) void sendGrades(failed);
-  }, [sendGrades, practice]);
+    if (failed.length > 0) void sendBatches(failed);
+  }, [sendBatches]);
 
   // 탭을 닫거나 백그라운드로 보낼 때도 채점을 잃지 않게 한다.
   useEffect(() => {
-    if (practice) return;
     const onHide = () => flushPending(true);
     const onVisibility = () => {
       if (document.visibilityState === "hidden") onHide();
@@ -141,7 +155,7 @@ export function StudySession({
   }
 
   function record(g: GradeInput) {
-    if (practice) return; // 연습 퀴즈는 아무것도 기록하지 않는다
+    // 연습 퀴즈도 기록은 한다. 복습 주기는 안 바뀌지만 오답은 오답노트에 남아야 한다.
     pendingRef.current.push(g);
     if (pendingRef.current.length >= FLUSH_AT) {
       flushPending();
@@ -238,6 +252,7 @@ export function StudySession({
     grade() {},
     undo() {},
     suspend() {},
+    edit() {},
   });
 
   useEffect(() => {
@@ -250,6 +265,7 @@ export function StudySession({
       grade: onGrade,
       undo: onUndo,
       suspend: () => void onSuspend(),
+      edit: () => setEditing(true),
     };
   });
 
@@ -282,6 +298,10 @@ export function StudySession({
           e.preventDefault();
           handlers.current.suspend();
           break;
+        case "e":
+          e.preventDefault();
+          handlers.current.edit();
+          break;
       }
     }
     window.addEventListener("keydown", onKey);
@@ -311,7 +331,7 @@ export function StudySession({
             </span>
             {practice && (
               <span className="rounded bg-warn-bg px-1.5 py-0.5 text-xs text-warn">
-                연습 · 진도 반영 안 됨
+                연습 · 주기 영향 없음
               </span>
             )}
             {card.weak && <span className="text-warn">★</span>}
@@ -328,6 +348,32 @@ export function StudySession({
       <section className="flex flex-1 flex-col items-center justify-center py-10 text-center">
         <CardFace card={card} revealed={revealed} />
       </section>
+
+      {editing && (
+        <EditOverlay
+          card={card}
+          onClose={() => setEditing(false)}
+          onSaved={(w) => {
+            // 큐에 남아 있는 같은 단어의 카드를 모두 갱신한다.
+            setQueue((q) =>
+              q.map((c) =>
+                c.word.id === w.id
+                  ? {
+                      ...c,
+                      word: {
+                        ...c.word,
+                        surface: w.surface,
+                        reading: w.reading,
+                        meaning_ko: w.meaning_ko,
+                      },
+                    }
+                  : c,
+              ),
+            );
+            setEditing(false);
+          }}
+        />
+      )}
 
       <footer className="no-select safe-b">
         {card.kind === "learn" ? (
@@ -369,6 +415,9 @@ export function StudySession({
             <button onClick={onUndo} disabled={!canUndo} className="underline underline-offset-4 disabled:opacity-30">
               되돌리기 (U)
             </button>
+            <button onClick={() => setEditing(true)} className="underline underline-offset-4">
+              수정 (E)
+            </button>
             {!practice && (
               <button onClick={() => void onSuspend()} className="underline underline-offset-4">
                 보류 (S)
@@ -378,6 +427,101 @@ export function StudySession({
         </div>
       </footer>
     </main>
+  );
+}
+
+/** 세션 중 오타 수정. 흐름을 끊지 않도록 오버레이로 띄운다. */
+function EditOverlay({
+  card,
+  onClose,
+  onSaved,
+}: {
+  card: SessionCard;
+  onClose: () => void;
+  onSaved: (w: { id: string; surface: string; reading: string; meaning_ko: string }) => void;
+}) {
+  const [surface, setSurface] = useState(card.word.surface);
+  const [reading, setReading] = useState(card.word.reading);
+  const [meaning, setMeaning] = useState(card.word.meaning_ko);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const readingKana = normalizeReading(reading) || surface.trim();
+
+  async function save() {
+    if (busy) return;
+    if (hasNonKana(readingKana)) {
+      setErr(`읽기에 가나가 아닌 문자가 남아 있습니다: ${readingKana}`);
+      return;
+    }
+    setBusy(true);
+    const res = await updateWordAction(card.word.id, {
+      surface: surface.trim(),
+      reading: readingKana,
+      meaning_ko: meaning.trim(),
+      study_day: "",
+    });
+    setBusy(false);
+    if (res.ok) {
+      onSaved({
+        id: res.word.id,
+        surface: res.word.surface,
+        reading: res.word.reading,
+        meaning_ko: res.word.meaning_ko,
+      });
+    } else {
+      setErr(res.reason === "duplicate" ? "같은 표기·읽기의 단어가 이미 있습니다." : "저장 실패");
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-10 flex items-end justify-center bg-black/40 p-4 sm:items-center">
+      <div className="w-full max-w-md rounded-2xl border border-border bg-surface p-5">
+        <h2 className="text-sm font-semibold">이 단어 수정</h2>
+        <div className="mt-4 flex flex-col gap-3">
+          <input
+            autoFocus
+            value={surface}
+            onChange={(e) => setSurface(e.target.value)}
+            lang="ja"
+            className="rounded-lg border border-border bg-bg px-3 py-2.5 text-xl"
+          />
+          <input
+            value={reading}
+            onChange={(e) => setReading(e.target.value)}
+            onBlur={() => setReading(readingKana)}
+            lang="ja"
+            autoCapitalize="none"
+            spellCheck={false}
+            className="rounded-lg border border-border bg-bg px-3 py-2.5 text-xl"
+          />
+          <input
+            value={meaning}
+            onChange={(e) => setMeaning(e.target.value)}
+            lang="ko"
+            className="rounded-lg border border-border bg-bg px-3 py-2.5"
+          />
+        </div>
+        {readingKana !== reading && reading.trim() && (
+          <p className="mt-2 text-sm">
+            → <b lang="ja">{readingKana}</b>
+          </p>
+        )}
+        {err && <p className="mt-2 text-sm text-danger">{err}</p>}
+        <div className="mt-4 flex gap-3">
+          <button
+            onClick={() => void save()}
+            disabled={busy}
+            className="flex-1 rounded-lg bg-accent px-4 py-3 font-semibold text-accent-fg disabled:opacity-50"
+          >
+            저장
+          </button>
+          <button onClick={onClose} className="rounded-lg border border-border px-5 py-3">
+            취소
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -398,7 +542,9 @@ function Done({
       <section className="rounded-2xl border border-border bg-surface px-6 py-12 text-center">
         <p className="text-2xl font-semibold">{practice ? "연습 완료" : "오늘의 학습 완료"}</p>
         {practice && (
-          <p className="mt-1 text-xs text-muted">복습 주기에는 반영되지 않았습니다</p>
+          <p className="mt-1 text-xs text-muted">
+            복습 주기는 그대로입니다. 틀린 단어는 오답노트에 기록됐습니다.
+          </p>
         )}
         <p className="mt-4 text-5xl font-semibold tabular-nums">
           {correct} / {answered}

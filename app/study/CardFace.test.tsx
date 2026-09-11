@@ -56,3 +56,38 @@ describe("카드 누출 방지", () => {
     expect(html).toContain("환경");
   });
 });
+
+describe("가나 전용 단어", () => {
+  function kanaCard(kind: CardKind): SessionCard {
+    return {
+      key: "k",
+      kind,
+      weak: false,
+      word: {
+        id: "w2",
+        surface: "きっかけ",
+        reading: "きっかけ",
+        meaning_ko: "계기",
+        stage: 0,
+        wrong_count: 0,
+      },
+    };
+  }
+
+  it("학습 카드에서 같은 글자를 두 번 보여주지 않는다", () => {
+    const html = renderToStaticMarkup(<CardFace card={kanaCard("learn")} revealed={false} />);
+    expect(html.split("きっかけ")).toHaveLength(2); // 1회만 등장
+    expect(html).toContain("계기");
+  });
+
+  it("표기 -> 뜻 카드도 공개 후 표기를 한 번만 보여준다", () => {
+    const html = renderToStaticMarkup(<CardFace card={kanaCard("s2m")} revealed />);
+    expect(html.split("きっかけ")).toHaveLength(2);
+    expect(html).toContain("계기");
+  });
+
+  it("공개 전에는 뜻이 DOM 에 없다", () => {
+    const html = renderToStaticMarkup(<CardFace card={kanaCard("s2m")} revealed={false} />);
+    expect(html).not.toContain("계기");
+  });
+});

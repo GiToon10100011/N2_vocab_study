@@ -92,3 +92,10 @@ export interface PromptWeights {
   s2m: number;
   r2m: number;
 }
+
+export interface AppSettings {
+  newLimit: number;
+  reviewLimit: number;
+  weights: PromptWeights;
+  dayStartHour: number;
+}

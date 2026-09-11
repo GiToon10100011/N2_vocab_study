@@ -7,8 +7,10 @@ import {
   fetchStudyDays,
   fetchTodayCounts,
   fetchWeakTotal,
+  fetchWrongTotal,
 } from "@/lib/queries";
-import { DEFAULT_NEW_LIMIT, addDays, studyDate, studyDayStart } from "@/lib/srs";
+import { addDays, studyDayStart } from "@/lib/srs";
+import { getSettingsAndToday } from "@/lib/settings";
 
 export const dynamic = "force-dynamic";
 
@@ -21,21 +23,25 @@ function formatKoreanDate(ymd: string): string {
 }
 
 export default async function HomePage() {
-  const today = studyDate();
-
-  let counts, week, weakTotal, days;
+  let today: string;
+  let newLimit: number;
+  let counts, week, weakTotal, days, wrongTotal;
   try {
-    [counts, week, weakTotal, days] = await Promise.all([
+    const s = await getSettingsAndToday();
+    today = s.today;
+    newLimit = s.settings.newLimit;
+    [counts, week, weakTotal, days, wrongTotal] = await Promise.all([
       fetchTodayCounts(today),
       fetchPeriodStats(studyDayStart(addDays(today, -6)).toISOString()),
       fetchWeakTotal(),
       fetchStudyDays(today),
+      fetchWrongTotal(),
     ]);
   } catch (err) {
     return <SetupNotice message={err instanceof Error ? err.message : String(err)} />;
   }
 
-  const newToday = Math.min(counts.newCount, DEFAULT_NEW_LIMIT);
+  const newToday = Math.min(counts.newCount, newLimit);
   const total = newToday + counts.reviewCount;
   // "아직 단어가 없음"과 "오늘 할 일을 끝냄"은 완전히 다른 상태다.
   const empty = counts.totalWords === 0;
@@ -103,6 +109,23 @@ export default async function HomePage() {
         </section>
       )}
 
+      {wrongTotal > 0 && (
+        <Link
+          href="/words?filter=wrong"
+          className="mt-4 flex items-center gap-3 rounded-xl border border-border bg-surface px-5 py-4"
+        >
+          <span className="font-semibold">오답노트</span>
+          <span className="text-2xl font-semibold tabular-nums">{wrongTotal}</span>
+          <span className="text-sm text-muted">개</span>
+          {weakTotal > 0 && (
+            <span className="rounded bg-warn-bg px-1.5 py-0.5 text-xs text-warn">
+              취약 {weakTotal}
+            </span>
+          )}
+          <span className="ml-auto text-sm text-muted">보기 →</span>
+        </Link>
+      )}
+
       <GroupList days={days} />
 
       <section className="mt-10 flex flex-wrap items-baseline justify-center gap-x-6 gap-y-2 text-sm text-muted">
@@ -119,21 +142,21 @@ export default async function HomePage() {
             {week.accuracy === null ? "—" : `${Math.round(week.accuracy * 100)}%`}
           </b>
         </span>
-        <span>
-          취약 <b className="font-semibold text-fg tabular-nums">{weakTotal}</b>
-        </span>
       </section>
 
-      <nav className="mt-auto flex justify-center gap-6 pt-12 text-sm">
+      <nav className="mt-auto flex flex-wrap justify-center gap-6 pt-12 text-sm safe-b">
         <Link href="/add" className="underline underline-offset-4">
           + 단어 추가
         </Link>
-        <a href="/api/export?format=csv" className="underline underline-offset-4">
-          CSV 백업
-        </a>
-        <a href="/api/export?format=json" className="underline underline-offset-4">
-          JSON 백업
-        </a>
+        <Link href="/words" className="underline underline-offset-4">
+          단어 목록
+        </Link>
+        <Link href="/stats" className="underline underline-offset-4">
+          통계
+        </Link>
+        <Link href="/settings" className="underline underline-offset-4">
+          설정
+        </Link>
       </nav>
     </main>
   );

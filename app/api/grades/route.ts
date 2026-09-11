@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { fetchSrsStates } from "@/lib/queries";
-import { planGrades, studyDate } from "@/lib/srs";
+import { planGrades } from "@/lib/srs";
+import { getSettingsAndToday } from "@/lib/settings";
 import type { CardKind, GradeInput, SrsState } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -40,6 +41,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: "bad json" }, { status: 400 });
   }
 
+  const practice = (body as { practice?: unknown })?.practice === true;
   const grades = parseGrades((body as { grades?: unknown })?.grades);
   if (grades.length === 0) return NextResponse.json({ ok: true, applied: 0 });
 
@@ -59,12 +61,13 @@ export async function POST(req: Request) {
     ]),
   );
 
-  const today = studyDate();
+  const { today } = await getSettingsAndToday();
   // 삭제된 단어의 채점은 버린다(리뷰 로그 FK 위반 방지).
   const plan = planGrades(
     states,
     grades.filter((g) => known.has(g.wordId)),
     today,
+    practice,
   );
   if (plan.length === 0) return NextResponse.json({ ok: true, applied: 0 });
 
@@ -72,36 +75,54 @@ export async function POST(req: Request) {
   const queries = [];
 
   for (const item of plan) {
-    if (!item.patch) continue;
-    const p = item.patch;
-    queries.push(
-      sql.query(
-        `update words
-            set stage = $1, next_review = $2::date, correct_count = $3,
-                wrong_count = $4, streak = $5, last_wrong_type = $6, last_reviewed = now()
-          where id = $7`,
-        [
-          p.stage,
-          p.next_review,
-          p.correct_count,
-          p.wrong_count,
-          p.streak,
-          p.last_wrong_type,
-          item.wordId,
-        ],
-      ),
-    );
+    if (!item.counters) continue;
+    const c = item.counters;
+    if (item.schedule) {
+      queries.push(
+        sql.query(
+          `update words
+              set stage = $1, next_review = $2::date, correct_count = $3,
+                  wrong_count = $4, streak = $5, last_wrong_type = $6, last_reviewed = now()
+            where id = $7`,
+          [
+            item.schedule.stage,
+            item.schedule.next_review,
+            c.correct_count,
+            c.wrong_count,
+            c.streak,
+            c.last_wrong_type,
+            item.wordId,
+          ],
+        ),
+      );
+    } else {
+      // 연습 퀴즈: 오답 기록만 남기고 복습 주기(stage / next_review)는 손대지 않는다.
+      queries.push(
+        sql.query(
+          `update words
+              set correct_count = $1, wrong_count = $2, streak = $3, last_wrong_type = $4
+            where id = $5`,
+          [c.correct_count, c.wrong_count, c.streak, c.last_wrong_type, item.wordId],
+        ),
+      );
+    }
   }
 
   const logParams: unknown[] = [];
   const logRows = plan.map((item, i) => {
-    const base = i * 4;
-    logParams.push(item.wordId, item.log.promptType, item.log.correct, item.log.retry);
-    return `($${base + 1}::uuid, $${base + 2}, $${base + 3}, $${base + 4})`;
+    const base = i * 5;
+    logParams.push(
+      item.wordId,
+      item.log.promptType,
+      item.log.correct,
+      item.log.retry,
+      item.log.practice,
+    );
+    return `($${base + 1}::uuid, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5})`;
   });
   queries.push(
     sql.query(
-      `insert into reviews (word_id, prompt_type, correct, in_session_retry)
+      `insert into reviews (word_id, prompt_type, correct, in_session_retry, practice)
        values ${logRows.join(", ")}`,
       logParams,
     ),

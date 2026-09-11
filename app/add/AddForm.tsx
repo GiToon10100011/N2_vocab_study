@@ -2,9 +2,9 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { toKana } from "wanakana";
+import { PasteForm } from "./PasteForm";
 import { addWordAction, lookupSurfaceAction } from "@/lib/actions/words";
-import { hasNonKana, isAllKana } from "@/lib/kana";
+import { hasNonKana, isAllKana, normalizeReading, toKatakanaReading } from "@/lib/kana";
 import { addDays, diffDays, stageLabel } from "@/lib/srs";
 import type { StudyDayGroup, Word } from "@/lib/types";
 
@@ -39,15 +39,15 @@ export function AddForm({
   const [studyDay, setStudyDay] = useState(today);
   const [days, setDays] = useState<StudyDayGroup[]>(initialDays);
   const [surface, setSurface] = useState("");
-  const [reading, setReading] = useState("");
+  const [reading, setReading] = useState(""); // 친 그대로 둔다. 확정 변환은 칸을 떠날 때 한 번만.
   const [meaning, setMeaning] = useState("");
   const [recent, setRecent] = useState<Entry[]>(
     initialRecent.map((word) => ({ word, merged: false })),
   );
+  const [tab, setTab] = useState<"one" | "paste">("one");
   const [dupes, setDupes] = useState<Word[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [autoFilled, setAutoFilled] = useState(false);
 
   const surfaceRef = useRef<HTMLInputElement>(null);
   const readingRef = useRef<HTMLInputElement>(null);
@@ -55,72 +55,73 @@ export function AddForm({
 
   // IME 조합 중에 눌린 Enter 는 "변환 확정"이므로 필드 이동에 쓰면 안 된다.
   const composing = useRef(false);
-  // 표기 칸에서 변환 전에 지나간 가나를 모아 읽기 칸 제안으로 쓴다.
-  const curKana = useRef("");
-  const accumKana = useRef("");
-  // 사용자가 읽기 칸을 직접 건드렸으면 자동 채움을 하지 않는다.
-  const readingTouched = useRef(false);
 
-  // 이벤트 핸들러에서만 호출된다(렌더 중 ref 접근 아님).
   const focus = (f: Field) => {
-    const el =
-      f === "surface" ? surfaceRef : f === "reading" ? readingRef : meaningRef;
+    const el = f === "surface" ? surfaceRef : f === "reading" ? readingRef : meaningRef;
     el.current?.focus();
   };
+
+  // 표기가 전부 가나인 단어(きっかけ, バランス)는 읽기가 표기와 같을 수밖에 없다.
+  // 추정하지 않고 확정한다.
+  const surfaceIsKana = isAllKana(surface.trim());
+  const readingKana = surfaceIsKana ? surface.trim() : normalizeReading(reading);
+  const showPreview = !surfaceIsKana && reading.trim().length > 0 && readingKana !== reading.trim();
 
   const reset = useCallback(() => {
     setSurface("");
     setReading("");
     setMeaning("");
     setDupes([]);
-    setAutoFilled(false);
-    curKana.current = "";
-    accumKana.current = "";
-    readingTouched.current = false;
     focus("surface");
   }, []);
 
-  const save = useCallback(
-    async () => {
-      if (saving) return;
-      if (!surface.trim() || !reading.trim() || !meaning.trim()) {
-        setError("세 칸을 모두 채워주세요.");
-        return;
-      }
-      setSaving(true);
-      setError(null);
-      try {
-        const res = await addWordAction({
-          surface,
-          reading,
-          meaning_ko: meaning,
-          studyDay,
-        });
-        if (res.ok) {
-          const entry = { word: res.word, merged: res.merged };
-          setRecent((r) => [entry, ...r.filter((e) => e.word.id !== res.word.id)].slice(0, 30));
-          if (!res.merged) {
-            const d = res.word.study_day;
-            setDays((prev) =>
-              prev.some((g) => g.study_day === d)
-                ? prev.map((g) => (g.study_day === d ? { ...g, total: g.total + 1 } : g))
-                : [...prev, { study_day: d, dayIndex: 0, weekIndex: 0, total: 1, dueToday: 0, newCount: 1 }].sort((a, b) =>
-                    a.study_day.localeCompare(b.study_day),
-                  ),
-            );
-          }
-          reset();
-        } else {
-          setError("입력값을 확인해주세요.");
+  const save = useCallback(async () => {
+    if (saving) return;
+    const s = surface.trim();
+    const m = meaning.trim();
+    if (!s || !readingKana || !m) {
+      setError("세 칸을 모두 채워주세요.");
+      return;
+    }
+    // 로마자가 남아 있으면 저장하지 않는다. 틀린 읽기는 없는 것보다 나쁘다.
+    if (hasNonKana(readingKana)) {
+      setError(`읽기에 가나가 아닌 문자가 남아 있습니다: ${readingKana}`);
+      focus("reading");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await addWordAction({
+        surface: s,
+        reading: readingKana,
+        meaning_ko: m,
+        studyDay,
+      });
+      if (res.ok) {
+        const entry = { word: res.word, merged: res.merged };
+        setRecent((r) => [entry, ...r.filter((e) => e.word.id !== res.word.id)].slice(0, 30));
+        if (!res.merged) {
+          const d = res.word.study_day;
+          setDays((prev) =>
+            prev.some((g) => g.study_day === d)
+              ? prev.map((g) => (g.study_day === d ? { ...g, total: g.total + 1 } : g))
+              : [
+                  ...prev,
+                  { study_day: d, dayIndex: 0, weekIndex: 0, total: 1, dueToday: 0, newCount: 1 },
+                ].sort((a, b) => a.study_day.localeCompare(b.study_day)),
+          );
         }
-      } catch {
-        setError("저장에 실패했습니다. 네트워크를 확인해주세요.");
-      } finally {
-        setSaving(false);
+        reset();
+      } else {
+        setError("입력값을 확인해주세요.");
       }
-    },
-    [surface, reading, meaning, saving, reset, studyDay],
-  );
+    } catch {
+      setError("저장에 실패했습니다. 네트워크를 확인해주세요.");
+    } finally {
+      setSaving(false);
+    }
+  }, [surface, readingKana, meaning, saving, reset, studyDay]);
 
   // 표기를 입력하는 동안 중복을 미리 알려준다.
   useEffect(() => {
@@ -141,20 +142,29 @@ export function AddForm({
     if (e.key !== "Enter") return;
     if (e.nativeEvent.isComposing || composing.current) return;
     e.preventDefault();
-    if (next === "submit") void save();
-    else focus(next);
+    if (next === "submit") {
+      void save();
+      return;
+    }
+    // 읽기 칸을 떠날 때 로마자를 가나로 확정한다.
+    if (next === "meaning") setReading(readingKana);
+    focus(next);
   }
 
-  const readingWarn = hasNonKana(reading);
   const dayInfo = describeDay(days, studyDay);
 
   return (
     <main className="mx-auto max-w-2xl px-5 py-8">
       <header className="flex items-baseline justify-between">
         <h1 className="text-lg font-semibold">단어 추가</h1>
-        <Link href="/" className="text-sm text-muted underline underline-offset-4">
-          홈으로
-        </Link>
+        <nav className="flex gap-4 text-sm text-muted">
+          <Link href="/words" className="underline underline-offset-4">
+            단어 목록
+          </Link>
+          <Link href="/" className="underline underline-offset-4">
+            홈으로
+          </Link>
+        </nav>
       </header>
 
       <section className="mt-6 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-border bg-surface px-4 py-3">
@@ -190,6 +200,49 @@ export function AddForm({
         </span>
       </section>
 
+      <div className="mt-4 flex gap-1.5">
+        {(
+          [
+            ["one", "한 개씩"],
+            ["paste", "여러 개 붙여넣기"],
+          ] as const
+        ).map(([key, label]) => (
+          <button
+            key={key}
+            onClick={() => setTab(key)}
+            className={`rounded-full px-4 py-1.5 text-sm ${
+              tab === key ? "bg-fg text-bg" : "border border-border text-muted"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {tab === "paste" ? (
+        <PasteForm
+          studyDay={studyDay}
+          onDone={(n) => {
+            setDays((prev) =>
+              prev.some((g) => g.study_day === studyDay)
+                ? prev.map((g) =>
+                    g.study_day === studyDay ? { ...g, total: g.total + n } : g,
+                  )
+                : [
+                    ...prev,
+                    {
+                      study_day: studyDay,
+                      dayIndex: 0,
+                      weekIndex: 0,
+                      total: n,
+                      dueToday: 0,
+                      newCount: n,
+                    },
+                  ].sort((a, b) => a.study_day.localeCompare(b.study_day)),
+            );
+          }}
+        />
+      ) : (
       <div className="mt-4 flex flex-col gap-4">
         <label className="flex flex-col gap-1.5">
           <span className="text-sm text-muted">표기 (일본어 IME)</span>
@@ -199,74 +252,71 @@ export function AddForm({
             value={surface}
             lang="ja"
             className="jp-md rounded-lg border border-border bg-surface px-4 py-3 outline-none focus:border-accent"
-            onChange={(e) => {
-              setSurface(e.target.value);
-              if (e.target.value === "") {
-                accumKana.current = "";
-                curKana.current = "";
-              }
-            }}
+            onChange={(e) => setSurface(e.target.value)}
             onCompositionStart={() => {
               composing.current = true;
             }}
-            onCompositionUpdate={(e) => {
-              // 변환 전 가나(かんきょう)를 붙잡아 둔다. 변환 후에는 한자가 들어오므로 걸러진다.
-              if (isAllKana(e.data)) curKana.current = e.data;
-            }}
             onCompositionEnd={() => {
               composing.current = false;
-              if (curKana.current) {
-                accumKana.current += curKana.current;
-                curKana.current = "";
-                if (!readingTouched.current) {
-                  setReading(accumKana.current);
-                  setAutoFilled(true);
-                }
-              }
             }}
-            onKeyDown={(e) => onEnter(e, "reading")}
+            onKeyDown={(e) => onEnter(e, surfaceIsKana ? "meaning" : "reading")}
           />
         </label>
 
         <label className="flex flex-col gap-1.5">
-          <span className="text-sm text-muted">
-            읽기{" "}
-            <span className="text-xs">
-              (로마자로 쳐도 가나로 바뀝니다 · kankyou → かんきょう)
-            </span>
+          <span className="flex items-center gap-2 text-sm text-muted">
+            읽기
+            {surfaceIsKana ? (
+              <span className="rounded bg-warn-bg px-1.5 py-0.5 text-xs text-warn">
+                가나 단어 · 표기와 같게 자동 확정
+              </span>
+            ) : (
+              <span className="text-xs">로마자로 치세요 · fukyuu → ふきゅう</span>
+            )}
           </span>
           <input
             ref={readingRef}
-            value={reading}
+            value={surfaceIsKana ? surface.trim() : reading}
+            readOnly={surfaceIsKana}
             lang="ja"
+            inputMode="text"
+            autoComplete="off"
+            autoCapitalize="none"
+            spellCheck={false}
             className={`jp-md rounded-lg border bg-surface px-4 py-3 outline-none focus:border-accent ${
-              readingWarn ? "border-warn" : "border-border"
-            } ${autoFilled ? "text-muted" : ""}`}
-            onChange={(e) => {
-              readingTouched.current = true;
-              setAutoFilled(false);
-              const v = e.target.value;
-              setReading(composing.current ? v : toKana(v, { IMEMode: true }));
-            }}
+              surfaceIsKana ? "border-border text-muted" : "border-border"
+            }`}
+            onChange={(e) => setReading(e.target.value)}
             onCompositionStart={() => {
               composing.current = true;
             }}
-            onCompositionEnd={(e) => {
+            onCompositionEnd={() => {
               composing.current = false;
-              setReading(e.currentTarget.value);
             }}
-            onFocus={() => {
-              if (autoFilled) setAutoFilled(false);
-            }}
+            onBlur={() => !surfaceIsKana && setReading(readingKana)}
             onKeyDown={(e) => onEnter(e, "meaning")}
           />
-          {readingWarn && (
-            <span className="text-xs text-warn">가나가 아닌 문자가 섞여 있습니다.</span>
+          {showPreview && (
+            <span className="flex items-center gap-2 text-sm">
+              <span className="text-muted">→</span>
+              <b className="jp-md" lang="ja">
+                {readingKana}
+              </b>
+              <button
+                type="button"
+                onClick={() => setReading(toKatakanaReading(reading))}
+                className="rounded-md border border-border px-2 py-0.5 text-xs text-muted"
+              >
+                가타카나로
+              </button>
+            </span>
           )}
         </label>
 
         <label className="flex flex-col gap-1.5">
-          <span className="text-sm text-muted">뜻 (한국어 IME)</span>
+          <span className="text-sm text-muted">
+            뜻 (한국어 IME) <span className="text-xs">· 여러 개면 쉼표로 구분</span>
+          </span>
           <input
             ref={meaningRef}
             value={meaning}
@@ -291,8 +341,8 @@ export function AddForm({
           <div className="rounded-lg bg-warn-bg px-4 py-3 text-sm text-warn">
             {dupes.map((d) => (
               <div key={d.id}>
-                이미 있음 · {d.surface} {d.reading} {d.meaning_ko} ({stageLabel(d.stage)},{" "}
-                다음 복습 {d.next_review})
+                이미 있음 · {d.surface} {d.reading} {d.meaning_ko} ({stageLabel(d.stage)}, 다음
+                복습 {d.next_review})
               </div>
             ))}
             <div className="mt-1 text-xs opacity-80">
@@ -311,6 +361,7 @@ export function AddForm({
           저장
         </button>
       </div>
+      )}
 
       <section className="mt-12">
         <h2 className="text-sm text-muted">최근 추가 {recent.length}개</h2>
@@ -323,9 +374,11 @@ export function AddForm({
               <span className="text-xl" lang="ja">
                 {w.surface}
               </span>
-              <span className="text-sm text-muted" lang="ja">
-                {w.reading}
-              </span>
+              {w.surface !== w.reading && (
+                <span className="text-sm text-muted" lang="ja">
+                  {w.reading}
+                </span>
+              )}
               <span className="text-sm">{w.meaning_ko}</span>
               <span className="text-xs text-muted tabular-nums">{w.study_day}</span>
               {merged && (

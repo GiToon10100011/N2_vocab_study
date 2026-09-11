@@ -51,5 +51,29 @@ create table if not exists reviews (
     check (prompt_type in ('s2r', 's2m', 'r2m', 'learn'))
 );
 
+-- 연습 퀴즈에서 나온 채점인지. 연습은 복습 주기(stage/next_review)를 바꾸지 않지만
+-- 오답 기록(wrong_count/streak)에는 반영되므로 통계에서 구분할 수 있어야 한다.
+alter table reviews add column if not exists practice boolean not null default false;
+
 create index if not exists reviews_at   on reviews (reviewed_at);
 create index if not exists reviews_word on reviews (word_id);
+create index if not exists reviews_wrong on reviews (word_id, reviewed_at desc) where correct = false;
+
+-- 설정. 1인용이므로 항상 id = 1 한 행만 쓴다.
+create table if not exists settings (
+  id              smallint primary key default 1,
+  new_limit       integer  not null default 30,
+  review_limit    integer  not null default 150,
+  weight_s2r      integer  not null default 60,
+  weight_s2m      integer  not null default 25,
+  weight_r2m      integer  not null default 15,
+  day_start_hour  smallint not null default 4,
+
+  constraint settings_single_row check (id = 1),
+  constraint settings_limits check (new_limit between 0 and 200 and review_limit between 10 and 1000),
+  constraint settings_weights check (weight_s2r >= 0 and weight_s2m >= 0 and weight_r2m >= 0
+                                     and weight_s2r + weight_s2m + weight_r2m > 0),
+  constraint settings_day_start check (day_start_hour between 0 and 12)
+);
+
+insert into settings (id) values (1) on conflict (id) do nothing;

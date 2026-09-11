@@ -14,12 +14,15 @@ JLPT N2 준비용 개인 단어 학습 앱. 상세 기획서: `~/.claude/plans/s
    SRS 스케줄이 2개 생겨 복습량이 조용히 두 배가 되고, 두 행이 한 세션에 같이 나오면
    앞 카드가 뒤 카드의 정답이 된다. 단 **저장을 실패시키지는 않는다**: 충돌하면 뜻만 갱신하고
    진도는 그대로 두어 입력 흐름(Enter 체인)을 끊지 않는다.
-5. **연습 퀴즈(`/study?from=&to=`)는 DB 에 아무것도 쓰지 않는다.** 아무 때나 몇 번이든
-   돌릴 수 있어야 하므로, 여기서의 채점이 `next_review` 나 카운트를 건드리면 간격 반복이 망가진다.
-   SRS 를 움직이는 경로는 `/api/grades` 하나뿐이다.
-6. **통합 테스트(`*.itest.ts`)는 실제 어휘를 픽스처로 쓰지 않는다.** 전각 `ＺＺ` 네임스페이스를
+5. **연습 퀴즈는 복습 주기를 건드리지 않는다.** `planGrades(..., practice = true)` 는
+   `schedule` 을 null 로 두고 `counters` 만 낸다. 단, 오답 기록(wrong_count/streak)은
+   갱신한다 — 연습에서 계속 틀리는 단어는 오답노트에 올라와야 하기 때문이다.
+6. **읽기는 추정하지 않는다.** 부분 변환(IMEMode)과 IME 조합 가로채기를 쓰지 말 것.
+   `ふきゅう` 가 `ふきゅ` 로 잘려 저장된 적이 있다. `normalizeReading()` 으로 칸을 떠날 때
+   통째로 변환하고, 가나가 아니면 저장을 막는다. 표기가 가나뿐이면 읽기 = 표기로 확정한다.
+7. **통합 테스트(`*.itest.ts`)는 실제 어휘를 픽스처로 쓰지 않는다.** 전각 `ＺＺ` 네임스페이스를
    쓴다. 예전에 `環境` 을 픽스처로 썼다가 정리 단계에서 실제 단어 행을 지운 적이 있다.
-7. 학습 효과를 직접 올리지 않는 기능은 추가하지 않는다.
+8. 학습 효과를 직접 올리지 않는 기능은 추가하지 않는다.
    제외 목록: 소셜, 다중 사용자, AI, 게임화, 애니메이션, 복잡한 통계, 덱/태그, TTS.
 
 ## 구조
@@ -27,6 +30,9 @@ JLPT N2 준비용 개인 단어 학습 앱. 상세 기획서: `~/.claude/plans/s
 ```
 lib/srs.ts         간격 사다리 · 전이 규칙 · 유형 추첨 · 큐 구성. 전부 순수 함수
 lib/queries.ts     SQL. date/timestamptz 는 to_char 로 문자열 고정해서 받는다
+lib/kana.ts        읽기 확정 변환. 부분 변환 금지
+lib/parse.ts       붙여넣기 파서
+lib/settings.ts    설정 + 하루 경계 기준 오늘 날짜
 lib/actions/       Server Action ("use server")
 app/api/grades/    채점 배치. keepalive fetch 를 쓰려고 Route Handler 로 뒀다
 app/study/         세션 화면. CardFace 는 테스트를 위해 분리되어 있다
@@ -48,8 +54,8 @@ proxy.ts           비밀번호 게이트 (Next 16 에서 middleware 는 proxy �
 ## 검증
 
 ```bash
-npm test          # 31개 (SRS 전이표, 유형 분포, 큐 우선순위, 연습 큐, 카드 누출)
-npm run test:db   # 8개 (실제 Neon 왕복)
+npm test          # 50개 (SRS 전이표, 유형 분포, 큐, 읽기 변환, 파서, 카드 누출)
+npm run test:db   # 12개 (실제 Neon 왕복)
 npm run typecheck
 npx eslint .
 npm run build

@@ -121,8 +121,9 @@ describe("세션 내 재시도 / 학습 카드", () => {
       { wordId: "w1", kind: "s2r", correct: true, retry: true },
     ];
     const plan = planGrades(states, grades, TODAY);
-    expect(plan[0].patch?.stage).toBe(1);
-    expect(plan[1].patch).toBeNull();
+    expect(plan[0].schedule?.stage).toBe(1);
+    expect(plan[1].schedule).toBeNull();
+    expect(plan[1].counters).toBeNull();
     expect(plan[1].log.retry).toBe(true);
     expect(states.get("w1")!.stage).toBe(1); // 재시도로 되돌아가지 않는다
   });
@@ -134,7 +135,8 @@ describe("세션 내 재시도 / 학습 카드", () => {
       [{ wordId: "w1", kind: "learn", correct: true, retry: false }],
       TODAY,
     );
-    expect(plan[0].patch).toBeNull();
+    expect(plan[0].schedule).toBeNull();
+    expect(plan[0].counters).toBeNull();
     expect(states.get("w1")!.stage).toBe(0);
   });
 });
@@ -357,5 +359,55 @@ describe("연습 퀴즈 큐", () => {
       expect(q.find((c) => c.word.id === "kana")!.kind).toBe("s2m");
       expect(q.filter((c) => c.word.surface === "以外")[0].kind).not.toBe("r2m");
     }
+  });
+});
+
+describe("연습 퀴즈 채점", () => {
+  it("복습 주기는 그대로 두고 오답 기록만 남긴다", () => {
+    const states = new Map<string, SrsState>([
+      ["w1", state({ stage: 5, streak: 4, correct_count: 9 })],
+    ]);
+    const plan = planGrades(
+      states,
+      [{ wordId: "w1", kind: "s2r", correct: false, retry: false }],
+      TODAY,
+      true, // practice
+    );
+    expect(plan[0].schedule).toBeNull(); // 주기 미변경
+    expect(plan[0].counters).toEqual({
+      correct_count: 9,
+      wrong_count: 1,
+      streak: 0,
+      last_wrong_type: "s2r",
+    });
+    expect(plan[0].log.practice).toBe(true);
+    expect(states.get("w1")!.stage).toBe(5); // 단계 유지
+  });
+
+  it("연습에서 맞히면 연속 정답이 이어져 취약에서 벗어날 수 있다", () => {
+    const states = new Map<string, SrsState>([
+      ["w1", state({ stage: 3, wrong_count: 4, streak: 1 })],
+    ]);
+    const plan = planGrades(
+      states,
+      [{ wordId: "w1", kind: "s2m", correct: true, retry: false }],
+      TODAY,
+      true,
+    );
+    expect(plan[0].counters!.streak).toBe(2);
+    expect(plan[0].counters!.last_wrong_type).toBeNull();
+    expect(isWeak({ wrong_count: 4, streak: 2 })).toBe(false);
+    expect(plan[0].schedule).toBeNull();
+  });
+
+  it("SRS 세션은 주기까지 바꾼다 (대조군)", () => {
+    const states = new Map<string, SrsState>([["w1", state({ stage: 5 })]]);
+    const plan = planGrades(
+      states,
+      [{ wordId: "w1", kind: "s2r", correct: false, retry: false }],
+      TODAY,
+      false,
+    );
+    expect(plan[0].schedule).toEqual({ stage: 1, next_review: addDays(TODAY, 1) });
   });
 });

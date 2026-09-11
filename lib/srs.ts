@@ -106,31 +106,29 @@ export function stageLabel(stage: number): string {
  * 전이 함수 — 이 앱의 핵심. 서버에서만 호출한다(단일 출처 유지).
  * ------------------------------------------------------------------ */
 
-export interface GradePatch {
-  stage: number;
-  next_review: string;
+/** 성적 카운터. 연습 퀴즈도 이건 갱신한다(= 오답노트에 반영된다). */
+export interface GradeCounters {
   correct_count: number;
   wrong_count: number;
   streak: number;
   last_wrong_type: PromptType | null;
 }
 
-/**
- * 알았음 -> 사다리 한 칸 위로.
- * 몰랐음 -> stage 1 고정(= 내일 다시). 2버튼 시스템에서 가장 예측 가능하고,
- *           한자 약점 보완에 안전한 쪽으로 기운다(기획 5.3).
- */
-export function gradeWord(
+/** 복습 스케줄. 오직 SRS 세션만 이걸 갱신한다. */
+export interface GradeSchedule {
+  stage: number;
+  next_review: string;
+}
+
+export type GradePatch = GradeCounters & GradeSchedule;
+
+export function gradeCounters(
   state: SrsState,
   promptType: PromptType,
   correct: boolean,
-  today: string,
-): GradePatch {
+): GradeCounters {
   if (correct) {
-    const stage = Math.min(state.stage + 1, MAX_STAGE);
     return {
-      stage,
-      next_review: addDays(today, LADDER[stage]),
       correct_count: state.correct_count + 1,
       wrong_count: state.wrong_count,
       streak: state.streak + 1,
@@ -138,12 +136,39 @@ export function gradeWord(
     };
   }
   return {
-    stage: 1,
-    next_review: addDays(today, LADDER[1]),
     correct_count: state.correct_count,
     wrong_count: state.wrong_count + 1,
     streak: 0,
     last_wrong_type: promptType,
+  };
+}
+
+/**
+ * 알았음 -> 사다리 한 칸 위로.
+ * 몰랐음 -> stage 1 고정(= 내일 다시). 2버튼 시스템에서 가장 예측 가능하고,
+ *           한자 약점 보완에 안전한 쪽으로 기운다(기획 5.3).
+ */
+export function gradeSchedule(
+  state: SrsState,
+  correct: boolean,
+  today: string,
+): GradeSchedule {
+  if (correct) {
+    const stage = Math.min(state.stage + 1, MAX_STAGE);
+    return { stage, next_review: addDays(today, LADDER[stage]) };
+  }
+  return { stage: 1, next_review: addDays(today, LADDER[1]) };
+}
+
+export function gradeWord(
+  state: SrsState,
+  promptType: PromptType,
+  correct: boolean,
+  today: string,
+): GradePatch {
+  return {
+    ...gradeCounters(state, promptType, correct),
+    ...gradeSchedule(state, correct, today),
   };
 }
 
@@ -371,38 +396,46 @@ function interleave(reviewCards: QueueCard[], newBatches: QueueCard[][]): QueueC
 
 export interface GradePlanItem {
   wordId: string;
-  /** null 이면 SRS 를 건드리지 않는다(학습 카드 통과 / 세션 내 재시도). */
-  patch: GradePatch | null;
-  log: { promptType: CardKind; correct: boolean; retry: boolean };
+  /** 성적 카운터 갱신. null 이면 아무것도 바꾸지 않는다. */
+  counters: GradeCounters | null;
+  /** 복습 스케줄 갱신. 연습 퀴즈에서는 항상 null 이다. */
+  schedule: GradeSchedule | null;
+  log: { promptType: CardKind; correct: boolean; retry: boolean; practice: boolean };
 }
 
 /**
- * 학습 카드 통과와 세션 내 재시도는 로그만 남기고 스케줄을 바꾸지 않는다.
+ * 학습 카드 통과와 세션 내 재시도는 로그만 남긴다.
  * 정답을 방금 본 직후 맞히는 것은 기억이 아니라 잔상이기 때문이다(기획 5.3).
+ *
+ * practice = true (일차/주차 연습 퀴즈):
+ *   복습 주기(stage / next_review)는 절대 건드리지 않지만,
+ *   오답 기록(wrong_count / streak / last_wrong_type)에는 반영한다.
+ *   "연습에서 계속 틀리는 단어"는 진짜로 약한 단어이므로 오답노트에 올라와야 한다.
  */
 export function planGrades(
   states: Map<string, SrsState>,
   grades: GradeInput[],
   today: string,
+  practice = false,
 ): GradePlanItem[] {
   const out: GradePlanItem[] = [];
   for (const g of grades) {
-    const log = { promptType: g.kind, correct: g.correct, retry: g.retry };
+    const log = { promptType: g.kind, correct: g.correct, retry: g.retry, practice };
     if (g.kind === "learn" || g.retry) {
-      out.push({ wordId: g.wordId, patch: null, log });
+      out.push({ wordId: g.wordId, counters: null, schedule: null, log });
       continue;
     }
     const state = states.get(g.wordId);
     if (!state) continue; // 삭제된 단어
-    const patch = gradeWord(state, g.kind, g.correct, today);
+
+    const counters = gradeCounters(state, g.kind, g.correct);
+    const schedule = practice ? null : gradeSchedule(state, g.correct, today);
+
     states.set(g.wordId, {
-      stage: patch.stage,
-      correct_count: patch.correct_count,
-      wrong_count: patch.wrong_count,
-      streak: patch.streak,
-      last_wrong_type: patch.last_wrong_type,
+      stage: schedule ? schedule.stage : state.stage,
+      ...counters,
     });
-    out.push({ wordId: g.wordId, patch, log });
+    out.push({ wordId: g.wordId, counters, schedule, log });
   }
   return out;
 }

@@ -1,12 +1,17 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { db } from "./db";
 import {
+  deleteWordRow,
   fetchHomophoneCounts,
   fetchPeriodStats,
   fetchQueueCandidates,
+  fetchSettings,
   fetchTodayCounts,
   fetchWordsBySurface,
   insertWord,
+  saveSettings,
+  searchWords,
+  updateWordRow,
 } from "./queries";
 import { buildQueue, studyDate, addDays, studyDayStart } from "./srs";
 import { POST as gradesPOST } from "@/app/api/grades/route";
@@ -34,6 +39,7 @@ async function cleanup() {
 
 const ids: string[] = [];
 let statsBefore = { newCount: 0, reviewCount: 0, correctCount: 0, accuracy: null as number | null };
+let statsBeforeSrs = { newCount: 0, reviewCount: 0, correctCount: 0, accuracy: null as number | null };
 
 beforeAll(async () => {
   await cleanup();
@@ -125,6 +131,7 @@ describe("실제 DB 왕복", () => {
 
   it("채점 API 가 SRS 와 리뷰 로그를 함께 갱신한다", async () => {
     statsBefore = await fetchPeriodStats(studyDayStart(TODAY).toISOString());
+    statsBeforeSrs = await fetchPeriodStats(studyDayStart(TODAY).toISOString(), false);
     const [ok, ng] = [ids[0], ids[1]];
     const req = new Request("http://localhost/api/grades", {
       method: "POST",
@@ -172,15 +179,91 @@ describe("실제 DB 왕복", () => {
     expect(logs.filter((l) => l.prompt_type === "learn")).toHaveLength(1);
   });
 
+  it("연습 채점은 복습 주기를 건드리지 않고 오답만 남긴다", async () => {
+    const id = ids[2]; // ＺＺ以外
+    const before = (await db().query(
+      `select stage, to_char(next_review,'YYYY-MM-DD') as next_review, wrong_count
+         from words where id = $1::uuid`,
+      [id],
+    )) as Record<string, unknown>[];
+
+    const res = await gradesPOST(
+      new Request("http://localhost/api/grades", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          practice: true,
+          grades: [{ wordId: id, kind: "s2m", correct: false, retry: false }],
+        }),
+      }),
+    );
+    expect(res.status).toBe(200);
+
+    const after = (await db().query(
+      `select stage, to_char(next_review,'YYYY-MM-DD') as next_review, wrong_count, last_wrong_type
+         from words where id = $1::uuid`,
+      [id],
+    )) as Record<string, unknown>[];
+
+    expect(after[0].stage).toBe(before[0].stage); // 주기 그대로
+    expect(after[0].next_review).toBe(before[0].next_review);
+    expect(after[0].wrong_count).toBe((before[0].wrong_count as number) + 1); // 오답은 기록
+    expect(after[0].last_wrong_type).toBe("s2m");
+
+    const log = (await db().query(
+      `select practice from reviews where word_id = $1::uuid order by id desc limit 1`,
+      [id],
+    )) as { practice: boolean }[];
+    expect(log[0].practice).toBe(true);
+  });
+
+  it("오답노트 조회에 잡힌다", async () => {
+    const rows = await searchWords({ flag: "wrong", limit: 300 });
+    expect(rows.rows.some((w) => w.id === ids[2])).toBe(true);
+  });
+
+  it("수정과 삭제가 동작한다", async () => {
+    const target = ids[4]; // ＺＺちゃんと
+    const updated = await updateWordRow(target, {
+      surface: `${P}ちゃんと`,
+      reading: `${P}ちゃんと`,
+      meaning_ko: "제대로·확실히",
+      study_day: null,
+    });
+    expect(updated?.meaning_ko).toBe("제대로·확실히");
+
+    const extra = await insertWord({
+      surface: `${P}삭제용`, reading: `${P}さくじょ`, meaning_ko: "삭제용", note: MARK, study_day: TODAY,
+    });
+    await deleteWordRow(extra.word.id);
+    const gone = await db().query(`select 1 from words where id = $1::uuid`, [extra.word.id]);
+    expect(gone).toHaveLength(0);
+  });
+
+  it("설정을 저장하고 읽는다", async () => {
+    const before = await fetchSettings();
+    await saveSettings({ ...before, newLimit: 42, weights: { s2r: 70, s2m: 20, r2m: 10 } });
+    const after = await fetchSettings();
+    expect(after.newLimit).toBe(42);
+    expect(after.weights).toEqual({ s2r: 70, s2m: 20, r2m: 10 });
+    await saveSettings(before); // 원복
+    expect((await fetchSettings()).newLimit).toBe(before.newLimit);
+  });
+
   it("오늘 카운트와 기간 통계가 나온다", async () => {
     const counts = await fetchTodayCounts(TODAY);
     expect(counts.totalWords).toBeGreaterThanOrEqual(FIXTURES.length);
     expect(counts.newCount).toBeGreaterThanOrEqual(3);
 
     // 기존 데이터가 섞여 있어도 되도록 증분으로 본다.
+    // 이 파일에서 채점한 것: SRS 2건(정답1/오답1) + 연습 1건(오답). learn 과 재시도는 제외된다.
     const after = await fetchPeriodStats(studyDayStart(TODAY).toISOString());
-    expect(after.reviewCount - statsBefore.reviewCount).toBe(2); // learn 과 재시도는 제외
+    expect(after.reviewCount - statsBefore.reviewCount).toBe(3);
     expect(after.correctCount - statsBefore.correctCount).toBe(1);
+
+    // 연습을 빼면 SRS 세션분만 남는다.
+    const srsOnly = await fetchPeriodStats(studyDayStart(TODAY).toISOString(), false);
+    expect(srsOnly.reviewCount - statsBeforeSrs.reviewCount).toBe(2);
   });
 
   it("CSV / JSON export 가 전 필드를 담는다", async () => {

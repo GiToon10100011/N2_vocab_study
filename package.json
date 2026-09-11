@@ -13,7 +13,8 @@
     "db:migrate": "node --env-file=.env.local scripts/migrate.mjs",
     "test:db": "vitest run --config vitest.integration.mts",
     "db:seed": "node --env-file=.env.local scripts/seed.mjs",
-    "icons": "node scripts/make-icons.mjs"
+    "icons": "node scripts/make-icons.mjs",
+    "backup": "node --env-file=.env.local scripts/backup.mjs"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",

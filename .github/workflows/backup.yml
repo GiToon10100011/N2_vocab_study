@@ -1,0 +1,48 @@
+name: 데이터 백업
+
+# Neon 무료 플랜은 시점 복구 보존 기간이 짧다.
+# 매일 덤프해서 backups/ 에 커밋하면 git 히스토리가 그대로 날짜별 스냅샷이 된다.
+on:
+  schedule:
+    # 20:00 UTC = 05:00 KST. 하루 경계(04:00 KST)가 지난 뒤에 돌린다.
+    - cron: "0 20 * * *"
+  workflow_dispatch: # 수동 실행
+
+concurrency:
+  group: backup
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - run: npm ci
+
+      - name: 덤프
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: node scripts/backup.mjs backups
+
+      - name: 변경이 있을 때만 커밋
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # meta.json 은 매번 시각이 바뀌므로 데이터가 실제로 바뀐 경우에만 함께 커밋한다.
+          if git diff --quiet -- backups/words.csv backups/reviews.csv; then
+            echo "변경 없음 - 건너뜀"
+            git checkout -- backups/meta.json 2>/dev/null || true
+            exit 0
+          fi
+          git add backups
+          git commit -m "백업: $(date -u '+%Y-%m-%d')"
+          git push

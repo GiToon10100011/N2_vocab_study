@@ -10,7 +10,7 @@ export default async function AddPage() {
   let recent: Word[];
   let days: StudyDayGroup[];
   try {
-    [recent, days] = await Promise.all([fetchRecentlyAdded(20), fetchStudyDays()]);
+    [recent, days] = await Promise.all([fetchRecentlyAdded(20), fetchStudyDays(studyDate())]);
   } catch (err) {
     return <SetupNotice message={err instanceof Error ? err.message : String(err)} />;
   }

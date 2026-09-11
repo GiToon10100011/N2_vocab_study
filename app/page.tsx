@@ -1,7 +1,13 @@
 import Link from "next/link";
 import { HomeKeys } from "./HomeKeys";
 import { SetupNotice } from "./SetupNotice";
-import { fetchPeriodStats, fetchTodayCounts, fetchWeakTotal } from "@/lib/queries";
+import { GroupList } from "./GroupList";
+import {
+  fetchPeriodStats,
+  fetchStudyDays,
+  fetchTodayCounts,
+  fetchWeakTotal,
+} from "@/lib/queries";
 import { DEFAULT_NEW_LIMIT, addDays, studyDate, studyDayStart } from "@/lib/srs";
 
 export const dynamic = "force-dynamic";
@@ -14,24 +20,16 @@ function formatKoreanDate(ymd: string): string {
   return `${y}년 ${m}월 ${d}일 (${dow})`;
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex flex-col items-center gap-1">
-      <span className="text-4xl font-semibold tabular-nums sm:text-5xl">{value}</span>
-      <span className="text-sm text-muted">{label}</span>
-    </div>
-  );
-}
-
 export default async function HomePage() {
   const today = studyDate();
 
-  let counts, week, weakTotal;
+  let counts, week, weakTotal, days;
   try {
-    [counts, week, weakTotal] = await Promise.all([
+    [counts, week, weakTotal, days] = await Promise.all([
       fetchTodayCounts(today),
       fetchPeriodStats(studyDayStart(addDays(today, -6)).toISOString()),
       fetchWeakTotal(),
+      fetchStudyDays(today),
     ]);
   } catch (err) {
     return <SetupNotice message={err instanceof Error ? err.message : String(err)} />;
@@ -63,37 +61,49 @@ export default async function HomePage() {
           </Link>
         </section>
       ) : done ? (
-        <section className="mt-10 rounded-2xl border border-border bg-surface px-6 py-12 text-center">
-          <p className="text-2xl font-semibold">오늘의 학습 완료</p>
-          <p className="mt-2 text-sm text-muted">
-            예정된 복습과 신규 단어를 모두 끝냈습니다. 등록된 단어 {counts.totalWords}개.
-          </p>
+        <section className="mt-6 rounded-2xl border border-border bg-surface px-6 py-8 text-center">
+          <p className="text-lg font-semibold">오늘의 학습 완료</p>
+          <p className="mt-1 text-sm text-muted">등록된 단어 {counts.totalWords}개</p>
         </section>
       ) : (
-        <>
-          <section className="mt-10 grid grid-cols-3 gap-4 rounded-2xl border border-border bg-surface px-4 py-8">
-            <Stat label="신규" value={String(newToday)} />
-            <Stat label="복습" value={String(counts.reviewCount)} />
-            <Stat label="취약" value={String(counts.weakCount)} />
-          </section>
-
-          <Link
-            href="/study"
-            className="mt-6 rounded-xl bg-accent px-6 py-5 text-center text-lg font-semibold text-accent-fg"
-          >
-            학습 시작 <span className="ml-1 text-sm font-normal opacity-70">(Enter)</span>
-          </Link>
-
-          {newToday > 0 && counts.reviewCount > 0 && (
+        <section className="mt-6 rounded-2xl border border-border bg-surface p-5">
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-baseline gap-2">
+              <span className="text-sm text-muted">오늘의 복습 주기</span>
+              <span className="text-3xl font-semibold tabular-nums">{total}</span>
+              <span className="text-sm text-muted">개</span>
+            </div>
             <Link
-              href="/study?skipNew=1"
-              className="mt-3 text-center text-sm text-muted underline underline-offset-4"
+              href="/study"
+              className="rounded-xl bg-accent px-6 py-3.5 text-base font-semibold text-accent-fg whitespace-nowrap"
             >
-              오늘은 신규 건너뛰기
+              시작 <span className="text-xs font-normal opacity-70">(Enter)</span>
             </Link>
-          )}
-        </>
+          </div>
+
+          <div className="mt-4 flex items-center gap-5 border-t border-border pt-3 text-sm text-muted">
+            <span>
+              신규 <b className="font-semibold text-fg tabular-nums">{newToday}</b>
+            </span>
+            <span>
+              복습 <b className="font-semibold text-fg tabular-nums">{counts.reviewCount}</b>
+            </span>
+            <span>
+              취약 <b className="font-semibold text-fg tabular-nums">{counts.weakCount}</b>
+            </span>
+            {newToday > 0 && counts.reviewCount > 0 && (
+              <Link
+                href="/study?skipNew=1"
+                className="ml-auto underline underline-offset-4"
+              >
+                신규 건너뛰기
+              </Link>
+            )}
+          </div>
+        </section>
       )}
+
+      <GroupList days={days} />
 
       <section className="mt-10 flex flex-wrap items-baseline justify-center gap-x-6 gap-y-2 text-sm text-muted">
         <span>최근 7일</span>

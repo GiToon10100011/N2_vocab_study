@@ -305,6 +305,50 @@ export function buildQueue(input: BuildQueueInput): QueueCard[] {
   return interleave(reviewCards, newBatches);
 }
 
+/** Fisher-Yates. rand 를 주입해 테스트에서 결정적으로 돌린다. */
+export function shuffle<T>(items: T[], rand: () => number = Math.random): T[] {
+  const a = [...items];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+export interface BuildPracticeInput {
+  words: Word[];
+  readingCounts: Record<string, number>;
+  weights?: PromptWeights;
+  rand?: () => number;
+}
+
+/**
+ * 연습 퀴즈 큐. 아무 때나 눌러서 돌리는 용도라 SRS 를 전혀 건드리지 않는다.
+ * 학습 카드도 없고, 매번 순서가 섞인다. 단어 하나당 카드 하나.
+ */
+export function buildPracticeQueue(input: BuildPracticeInput): QueueCard[] {
+  const { words, readingCounts, weights = DEFAULT_WEIGHTS, rand = Math.random } = input;
+  return shuffle(
+    words.filter((w) => !w.suspended),
+    rand,
+  ).map((w) => {
+    const qw = toQueueWord(w);
+    return {
+      key: `${w.id}:p`,
+      kind: pickPromptType({
+        word: qw,
+        hasHomophone: (readingCounts[w.reading] ?? 1) > 1,
+        // 연습에서는 약점 유형 강제를 쓰지 않는다. 매번 다른 각도로 보는 게 목적이다.
+        lastWrongType: null,
+        weights,
+        rand: rand(),
+      }),
+      word: qw,
+      weak: isWeak(w),
+    };
+  });
+}
+
 function interleave(reviewCards: QueueCard[], newBatches: QueueCard[][]): QueueCard[] {
   if (newBatches.length === 0) return reviewCards;
   const slots = newBatches.length + 1;

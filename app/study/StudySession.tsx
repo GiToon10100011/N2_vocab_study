@@ -51,7 +51,16 @@ interface Snapshot {
   pendingLen: number;
 }
 
-export function StudySession({ initialCards }: { initialCards: QueueCard[] }) {
+export function StudySession({
+  initialCards,
+  practice = false,
+  title,
+}: {
+  initialCards: QueueCard[];
+  /** 일차/주차 퀴즈. 채점 결과를 서버로 보내지 않는다(SRS 미반영). */
+  practice?: boolean;
+  title?: string;
+}) {
   const [queue, setQueue] = useState<SessionCard[]>(initialCards);
   const [index, setIndex] = useState(0);
   const [revealed, setRevealed] = useState(false);
@@ -96,12 +105,14 @@ export function StudySession({ initialCards }: { initialCards: QueueCard[] }) {
 
   // 지난 세션에서 못 보낸 채점이 있으면 먼저 올린다.
   useEffect(() => {
+    if (practice) return;
     const failed = loadFailed();
     if (failed.length > 0) void sendGrades(failed);
-  }, [sendGrades]);
+  }, [sendGrades, practice]);
 
   // 탭을 닫거나 백그라운드로 보낼 때도 채점을 잃지 않게 한다.
   useEffect(() => {
+    if (practice) return;
     const onHide = () => flushPending(true);
     const onVisibility = () => {
       if (document.visibilityState === "hidden") onHide();
@@ -113,7 +124,7 @@ export function StudySession({ initialCards }: { initialCards: QueueCard[] }) {
       document.removeEventListener("visibilitychange", onVisibility);
       flushPending(true);
     };
-  }, [flushPending]);
+  }, [flushPending, practice]);
 
   const card: SessionCard | undefined = queue[index];
 
@@ -130,6 +141,7 @@ export function StudySession({ initialCards }: { initialCards: QueueCard[] }) {
   }
 
   function record(g: GradeInput) {
+    if (practice) return; // 연습 퀴즈는 아무것도 기록하지 않는다
     pendingRef.current.push(g);
     if (pendingRef.current.length >= FLUSH_AT) {
       flushPending();
@@ -206,7 +218,7 @@ export function StudySession({ initialCards }: { initialCards: QueueCard[] }) {
   }
 
   async function onSuspend() {
-    if (!card || busy) return;
+    if (!card || busy || practice) return;
     setBusy(true);
     try {
       await suspendWordAction(card.word.id);
@@ -277,7 +289,9 @@ export function StudySession({ initialCards }: { initialCards: QueueCard[] }) {
   }, []);
 
   if (finished || !card) {
-    return <Done answered={answered} correct={correct} missed={missed} />;
+    return (
+      <Done answered={answered} correct={correct} missed={missed} practice={practice} />
+    );
   }
 
   const total = queue.length;
@@ -287,9 +301,20 @@ export function StudySession({ initialCards }: { initialCards: QueueCard[] }) {
     <main className="mx-auto flex min-h-dvh max-w-2xl flex-col px-5 py-6">
       <header className="no-select">
         <div className="flex items-baseline justify-between text-sm text-muted">
-          <span>
-            {card.kind === "learn" ? "새 단어" : card.retry ? "다시" : "복습"}
-            {card.weak && <span className="ml-1 text-warn">★</span>}
+          <span className="flex items-center gap-2">
+            <span>
+              {card.retry
+                ? "다시"
+                : card.kind === "learn"
+                  ? "새 단어"
+                  : (title ?? "복습")}
+            </span>
+            {practice && (
+              <span className="rounded bg-warn-bg px-1.5 py-0.5 text-xs text-warn">
+                연습 · 진도 반영 안 됨
+              </span>
+            )}
+            {card.weak && <span className="text-warn">★</span>}
           </span>
           <span className="tabular-nums">
             {index + 1} / {total}
@@ -304,7 +329,7 @@ export function StudySession({ initialCards }: { initialCards: QueueCard[] }) {
         <CardFace card={card} revealed={revealed} />
       </section>
 
-      <footer className="no-select">
+      <footer className="no-select safe-b">
         {card.kind === "learn" ? (
           <button
             onClick={onLearnNext}
@@ -344,9 +369,11 @@ export function StudySession({ initialCards }: { initialCards: QueueCard[] }) {
             <button onClick={onUndo} disabled={!canUndo} className="underline underline-offset-4 disabled:opacity-30">
               되돌리기 (U)
             </button>
-            <button onClick={() => void onSuspend()} className="underline underline-offset-4">
-              보류 (S)
-            </button>
+            {!practice && (
+              <button onClick={() => void onSuspend()} className="underline underline-offset-4">
+                보류 (S)
+              </button>
+            )}
           </span>
         </div>
       </footer>
@@ -358,16 +385,21 @@ function Done({
   answered,
   correct,
   missed,
+  practice,
 }: {
   answered: number;
   correct: number;
   missed: QueueWord[];
+  practice: boolean;
 }) {
   const rate = answered > 0 ? Math.round((correct / answered) * 100) : null;
   return (
     <main className="mx-auto flex min-h-dvh max-w-2xl flex-col px-6 py-12">
       <section className="rounded-2xl border border-border bg-surface px-6 py-12 text-center">
-        <p className="text-2xl font-semibold">오늘의 학습 완료</p>
+        <p className="text-2xl font-semibold">{practice ? "연습 완료" : "오늘의 학습 완료"}</p>
+        {practice && (
+          <p className="mt-1 text-xs text-muted">복습 주기에는 반영되지 않았습니다</p>
+        )}
         <p className="mt-4 text-5xl font-semibold tabular-nums">
           {correct} / {answered}
         </p>
@@ -393,12 +425,22 @@ function Done({
         </section>
       )}
 
-      <Link
-        href="/"
-        className="mt-10 rounded-xl bg-accent px-6 py-4 text-center text-base font-semibold text-accent-fg"
-      >
-        홈으로
-      </Link>
+      <div className="mt-10 flex gap-3">
+        {practice && (
+          <button
+            onClick={() => window.location.reload()}
+            className="flex-1 rounded-xl border border-border bg-surface px-6 py-4 text-base font-semibold"
+          >
+            다시 (순서 섞기)
+          </button>
+        )}
+        <Link
+          href="/"
+          className="flex-1 rounded-xl bg-accent px-6 py-4 text-center text-base font-semibold text-accent-fg"
+        >
+          홈으로
+        </Link>
+      </div>
     </main>
   );
 }

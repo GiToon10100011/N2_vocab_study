@@ -117,9 +117,21 @@ npm run build        # 프로덕션 빌드
 
 ## 백업
 
-Neon 무료 플랜은 시점 복구 보존 기간이 짧다. **주 1회 홈 화면 하단의 CSV/JSON 백업을 눌러
-파일을 받아두는 것을 습관으로 삼는다.** CSV 는 앞 3열(`surface,reading,meaning_ko`)만 떼면
-Anki/Quizlet 으로도 그대로 들어간다.
+Neon 무료 플랜은 시점 복구 보존 기간이 짧아서 **자동 백업을 걸어뒀다.**
+
+`.github/workflows/backup.yml` 이 매일 05:00 KST 에 DB 를 덤프해 `backups/` 에 커밋한다.
+데이터가 바뀌지 않은 날은 커밋하지 않으므로 히스토리가 그대로 "공부한 날"의 목록이 된다.
+아무 날짜로나 되돌릴 수 있다 — 복원 방법은 `backups/README.md` 참고.
+
+```bash
+npm run backup        # 로컬에서 수동 덤프 (backups/ 갱신)
+```
+
+홈 화면 하단의 CSV/JSON 버튼은 그대로 남아 있다. 지금 당장 파일이 필요할 때 쓴다.
+CSV 는 앞 3열(`surface,reading,meaning_ko`)만 떼면 Anki/Quizlet 으로도 그대로 들어간다.
+
+> 이 저장소는 공개다. `backups/` 의 단어 목록과 학습 기록도 함께 공개된다.
+> 비공개로 바꾸려면 `gh repo edit --visibility private` 하면 된다(설정 변경은 불필요).
 
 ## PWA
 

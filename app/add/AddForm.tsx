@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { PasteForm } from "./PasteForm";
-import { WordEditRow } from "../WordEditRow";
+import { WordEditDialog } from "../WordEditDialog";
+import { deleteWordAction } from "@/lib/actions/words";
 import { addWordAction, lookupSurfaceAction } from "@/lib/actions/words";
 import { hasNonKana, isAllKana, normalizeReading, toKatakanaReading } from "@/lib/kana";
 import { addDays, diffDays, stageLabel } from "@/lib/srs";
@@ -46,7 +47,7 @@ export function AddForm({
     initialRecent.map((word) => ({ word, merged: false })),
   );
   const [tab, setTab] = useState<"one" | "paste">("one");
-  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editing, setEditing] = useState<Word | null>(null);
   const [dupes, setDupes] = useState<Word[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -68,6 +69,16 @@ export function AddForm({
   const surfaceIsKana = isAllKana(surface.trim());
   const readingKana = surfaceIsKana ? surface.trim() : normalizeReading(reading);
   const showPreview = !surfaceIsKana && reading.trim().length > 0 && readingKana !== reading.trim();
+
+  /** 목록에서 빼고 그 학습일의 개수도 줄인다. */
+  function removeFromRecent(w: Word) {
+    setRecent((r) => r.filter((e) => e.word.id !== w.id));
+    setDays((prev) =>
+      prev.map((g) =>
+        g.study_day === w.study_day ? { ...g, total: Math.max(0, g.total - 1) } : g,
+      ),
+    );
+  }
 
   const reset = useCallback(() => {
     setSurface("");
@@ -367,72 +378,93 @@ export function AddForm({
 
       <section className="mt-12">
         <h2 className="text-sm text-muted">
-          최근 추가 {recent.length}개{" "}
-          <span className="text-xs">· 단어를 누르면 그 자리에서 고치거나 지울 수 있습니다</span>
+          최근 추가 {recent.length}개
         </h2>
         <ul className="mt-3 divide-y divide-border rounded-xl border border-border bg-surface">
           {recent.length === 0 && (
             <li className="px-4 py-6 text-center text-sm text-muted">아직 없습니다.</li>
           )}
-          {recent.map(({ word: w, merged }) =>
-            editingId === w.id ? (
-              <WordEditRow
-                key={w.id}
-                word={w}
-                onClose={() => setEditingId(null)}
-                onSaved={(next) => {
-                  setRecent((r) =>
-                    r.map((e) => (e.word.id === next.id ? { ...e, word: next } : e)),
-                  );
-                  setEditingId(null);
-                }}
-                onDeleted={() => {
-                  setRecent((r) => r.filter((e) => e.word.id !== w.id));
-                  setDays((prev) =>
-                    prev.map((g) =>
-                      g.study_day === w.study_day
-                        ? { ...g, total: Math.max(0, g.total - 1) }
-                        : g,
-                    ),
-                  );
-                  setEditingId(null);
-                }}
-              />
-            ) : (
-              <li
-                key={w.id}
-                className="flex flex-wrap items-baseline gap-x-4 gap-y-1 px-4 py-2.5"
-              >
-                <button
-                  onClick={() => setEditingId(w.id)}
-                  className="text-left text-xl"
-                  lang="ja"
-                >
-                  {w.surface}
-                </button>
-                {w.surface !== w.reading && (
-                  <span className="text-sm text-muted" lang="ja">
-                    {w.reading}
-                  </span>
-                )}
-                <span className="text-sm">{w.meaning_ko}</span>
-                <span className="text-xs text-muted tabular-nums">{w.study_day}</span>
-                {merged && (
-                  <span className="rounded bg-warn-bg px-1.5 py-0.5 text-xs text-warn">
-                    이미 있던 단어 · 뜻 갱신
-                  </span>
-                )}
-                <button
-                  onClick={() => setEditingId(w.id)}
-                  className="ml-auto text-xs text-muted underline underline-offset-4"
-                >
-                  수정 · 삭제
-                </button>
-              </li>
-            ),
-          )}
+          {recent.map(({ word: w, merged }) => (
+            <RecentRow
+              key={w.id}
+              word={w}
+              merged={merged}
+              onEdit={() => setEditing(w)}
+              onDeleted={() => removeFromRecent(w)}
+            />
+          ))}
         </ul>
       </section>
+
+      {editing && (
+        <WordEditDialog
+          word={editing}
+          onClose={() => setEditing(null)}
+          onSaved={(next) => {
+            setRecent((r) => r.map((e) => (e.word.id === next.id ? { ...e, word: next } : e)));
+            setEditing(null);
+          }}
+          onDeleted={(w) => {
+            removeFromRecent(w);
+            setEditing(null);
+          }}
+        />
+      )}
     </main>
+  );
+}
+
+/** 최근 추가 목록의 한 줄. 수정은 모달로, 삭제는 여기서 바로. */
+function RecentRow({
+  word: w,
+  merged,
+  onEdit,
+  onDeleted,
+}: {
+  word: Word;
+  merged: boolean;
+  onEdit: () => void;
+  onDeleted: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+
+  async function remove() {
+    if (busy) return;
+    if (!confirm(`"${w.surface}" 를 삭제할까요? 복습 기록도 함께 사라집니다.`)) return;
+    setBusy(true);
+    await deleteWordAction(w.id);
+    setBusy(false);
+    onDeleted();
+  }
+
+  return (
+    <li className="flex flex-wrap items-baseline gap-x-3 gap-y-1 px-4 py-2.5">
+      <button onClick={onEdit} className="text-left text-xl" lang="ja">
+        {w.surface}
+      </button>
+      {w.surface !== w.reading && (
+        <span className="text-sm text-muted" lang="ja">
+          {w.reading}
+        </span>
+      )}
+      <span className="text-sm">{w.meaning_ko}</span>
+      {merged && (
+        <span className="rounded bg-warn-bg px-1.5 py-0.5 text-xs text-warn">뜻 갱신</span>
+      )}
+
+      <span className="ml-auto flex items-center gap-3 text-xs text-muted tabular-nums">
+        <span>{w.study_day}</span>
+        <button onClick={onEdit} className="underline underline-offset-4">
+          수정
+        </button>
+        <button
+          onClick={() => void remove()}
+          disabled={busy}
+          className="text-danger underline underline-offset-4 disabled:opacity-40"
+        >
+          삭제
+        </button>
+      </span>
+    </li>
   );
 }

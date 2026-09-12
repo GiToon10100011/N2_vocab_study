@@ -87,7 +87,7 @@ export function WordEditDialog({
       className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-4 sm:items-center"
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
-      <div className="max-h-[90dvh] w-full max-w-md overflow-y-auto rounded-2xl border border-border bg-surface p-5 safe-b">
+      <div className="max-h-[90dvh] w-full max-w-md overflow-y-auto rounded-2xl border border-border bg-surface p-6 pb-[calc(1.5rem+env(safe-area-inset-bottom))]">
         <div className="flex items-baseline justify-between">
           <h2 className="text-sm font-semibold">단어 수정</h2>
           <button onClick={onClose} className="text-xs text-muted underline underline-offset-4">
@@ -95,7 +95,7 @@ export function WordEditDialog({
           </button>
         </div>
 
-        <div className="mt-4 flex flex-col gap-3">
+        <div className="mt-5 flex flex-col gap-4">
           <label className="flex flex-col gap-1">
             <span className="text-xs text-muted">표기</span>
             <input
@@ -146,15 +146,15 @@ export function WordEditDialog({
           </label>
         </div>
 
-        {err && <p className="mt-3 text-sm text-danger">{err}</p>}
+        {err && <p className="mt-4 text-sm text-danger">{err}</p>}
 
-        <p className="mt-3 text-xs text-muted tabular-nums">
+        <p className="mt-5 text-xs text-muted tabular-nums">
           {stageLabel(word.stage)} · 다음 복습 {word.next_review} · 정답 {word.correct_count} /
           오답 {word.wrong_count} · 연속 {word.streak}
           {word.suspended && " · 보류됨"}
         </p>
 
-        <div className="mt-4 flex flex-wrap items-center gap-2">
+        <div className="mt-6 flex flex-wrap items-center gap-2">
           <button
             onClick={() => void save()}
             disabled={busy}

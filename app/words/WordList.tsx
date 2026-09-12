@@ -2,8 +2,8 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
-import { WordEditRow } from "../WordEditRow";
-import { searchWordsAction } from "@/lib/actions/words";
+import { WordEditDialog } from "../WordEditDialog";
+import { deleteWordAction, searchWordsAction } from "@/lib/actions/words";
 import { isWeak, stageLabel } from "@/lib/srs";
 import type { StudyDayGroup, Word } from "@/lib/types";
 import type { WordFlag, WordStatus } from "@/lib/queries";
@@ -40,7 +40,7 @@ export function WordList({
   const [day, setDay] = useState("");
   const [rows, setRows] = useState<Word[]>(initial);
   const [total, setTotal] = useState(initialTotal);
-  const [editing, setEditing] = useState<string | null>(null);
+  const [editing, setEditing] = useState<Word | null>(null);
   const [pending, startTransition] = useTransition();
   const first = useRef(true);
 
@@ -66,6 +66,11 @@ export function WordList({
     const t = setTimeout(reload, 250);
     return () => clearTimeout(t);
   }, [reload]);
+
+  function removeLocally(id: string) {
+    setRows((r) => r.filter((x) => x.id !== id));
+    setTotal((t) => Math.max(0, t - 1));
+  }
 
   const quizHref =
     flag === "wrong" ? "/study?filter=wrong" : flag === "weak" ? "/study?filter=weak" : null;
@@ -146,34 +151,56 @@ export function WordList({
             {pending ? "불러오는 중…" : "해당하는 단어가 없습니다."}
           </li>
         )}
-        {rows.map((w) =>
-          editing === w.id ? (
-            <WordEditRow
-              key={w.id}
-              word={w}
-              onClose={() => setEditing(null)}
-              onSaved={(next) => {
-                setRows((r) => r.map((x) => (x.id === next.id ? next : x)));
-                setEditing(null);
-              }}
-              onDeleted={() => {
-                setRows((r) => r.filter((x) => x.id !== w.id));
-                setTotal((t) => t - 1);
-                setEditing(null);
-              }}
-            />
-          ) : (
-            <Row key={w.id} word={w} onEdit={() => setEditing(w.id)} />
-          ),
-        )}
+        {rows.map((w) => (
+          <WordRow
+            key={w.id}
+            word={w}
+            onEdit={() => setEditing(w)}
+            onDeleted={() => removeLocally(w.id)}
+          />
+        ))}
       </ul>
+
+      {editing && (
+        <WordEditDialog
+          word={editing}
+          onClose={() => setEditing(null)}
+          onSaved={(next) => {
+            setRows((r) => r.map((x) => (x.id === next.id ? next : x)));
+            setEditing(null);
+          }}
+          onDeleted={(w) => {
+            removeLocally(w.id);
+            setEditing(null);
+          }}
+        />
+      )}
     </main>
   );
 }
 
-function Row({ word: w, onEdit }: { word: Word; onEdit: () => void }) {
+export function WordRow({
+  word: w,
+  onEdit,
+  onDeleted,
+}: {
+  word: Word;
+  onEdit: () => void;
+  onDeleted: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
   const kanaOnly = w.surface === w.reading;
   const total = w.correct_count + w.wrong_count;
+
+  async function remove() {
+    if (busy) return;
+    if (!confirm(`"${w.surface}" 를 삭제할까요? 복습 기록도 함께 사라집니다.`)) return;
+    setBusy(true);
+    await deleteWordAction(w.id);
+    setBusy(false);
+    onDeleted();
+  }
+
   return (
     <li className="flex flex-wrap items-baseline gap-x-3 gap-y-1 px-4 py-3">
       <button onClick={onEdit} className="text-left text-xl" lang="ja">
@@ -199,6 +226,13 @@ function Row({ word: w, onEdit }: { word: Word; onEdit: () => void }) {
         <span>{w.next_review}</span>
         <button onClick={onEdit} className="underline underline-offset-4">
           수정
+        </button>
+        <button
+          onClick={() => void remove()}
+          disabled={busy}
+          className="text-danger underline underline-offset-4 disabled:opacity-40"
+        >
+          삭제
         </button>
       </span>
     </li>

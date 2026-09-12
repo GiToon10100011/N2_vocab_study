@@ -144,7 +144,7 @@ export default async function HomePage() {
         </span>
       </section>
 
-      <nav className="mt-auto flex flex-wrap justify-center gap-6 pt-12 text-sm safe-b">
+      <nav className="mt-auto flex flex-wrap justify-center gap-6 pt-12 pb-[env(safe-area-inset-bottom)] text-sm">
         <Link href="/add" className="underline underline-offset-4">
           + 단어 추가
         </Link>

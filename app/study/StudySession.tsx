@@ -375,7 +375,7 @@ export function StudySession({
         />
       )}
 
-      <footer className="no-select safe-b">
+      <footer className="no-select pb-[env(safe-area-inset-bottom)]">
         {card.kind === "learn" ? (
           <button
             onClick={onLearnNext}

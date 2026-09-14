@@ -289,10 +289,14 @@ export function AddForm({
             className="jp-md rounded-lg border border-border bg-surface px-4 py-3 outline-none focus:border-accent"
             onChange={(e) => {
               setSurface(e.target.value);
+              // 표기를 비우면 그 단어에 딸린 읽기도 함께 비운다. 남겨두면 다음 단어에
+              // 이전 읽기가 섞여 들어간다.
               if (e.target.value === "") {
                 romaji.current = "";
                 accumKana.current = "";
+                readingTouched.current = false;
                 setGuess(null);
+                setReading("");
               }
             }}
             onCompositionStart={() => {

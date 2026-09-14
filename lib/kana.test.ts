@@ -81,9 +81,32 @@ describe("키 입력으로 읽기 추정", () => {
     expect(readingFromRomaji("toiawaseru", "問い合わせる")).toBe("といあわせる");
   });
 
+  it("끝의 ん 은 n 을 두 번 쳐야 들어가므로 한 번으로 줄인다", () => {
+    expect(readingFromRomaji("shinbunn", "新聞")).toBe("しんぶん");
+    expect(readingFromRomaji("kantann", "簡単")).toBe("かんたん");
+    expect(readingFromRomaji("untenn", "運転")).toBe("うんてん");
+    expect(readingFromRomaji("ninnki", "人気")).toBe("にんき");
+    // n 을 한 번만 쳐도(변환 시 IME 가 알아서 확정) 그대로 맞는다
+    expect(readingFromRomaji("shinbun", "新聞")).toBe("しんぶん");
+  });
+
+  it("nn 뒤에 모음이 오면 ん + な행 이므로 건드리지 않는다", () => {
+    expect(readingFromRomaji("annai", "案内")).toBe("あんない");
+    expect(readingFromRomaji("mannaka", "真ん中")).toBe("まんなか");
+    expect(readingFromRomaji("sannin", "三人")).toBe("さんにん");
+  });
+
   it("가나로 확정된 단어는 제안하지 않는다", () => {
     expect(readingFromRomaji("kikkake", "きっかけ")).toBeNull();
     expect(readingFromRomaji("baransu", "バランス")).toBeNull();
+  });
+
+  it("한국어 IME 는 음절마다 조합이 끝나지만 한자가 없으므로 제안하지 않는다", () => {
+    expect(readingFromRomaji("qkqh", "밥")).toBeNull();
+    expect(readingFromRomaji("gks", "한")).toBeNull();
+    expect(readingFromRomaji("dkssud", "안녕")).toBeNull();
+    // 알파벳을 그대로 친 경우도 마찬가지
+    expect(readingFromRomaji("fukyuu", "fukyuu")).toBeNull();
   });
 
   it("키를 놓쳐 자음으로 끝나면 제안하지 않는다 (어설픈 추정보다 빈 칸이 낫다)", () => {

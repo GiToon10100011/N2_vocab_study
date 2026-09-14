@@ -56,16 +56,34 @@ export function pushRomajiKey(buffer: string, code: string): string {
   return buffer;
 }
 
+/** 한자(CJK 한자 · 々 · 〆)가 하나라도 들어 있는가. */
+const HAS_KANJI = /[\u3400-\u4dbf\u4e00-\u9fff々〆]/;
+
+/**
+ * IME 로마자 관례를 표준 로마자로 맞춘다.
+ *
+ * IME 에서 단독 ん 을 넣으려면 n 을 두 번 쳐야 한다(しんぶん = shinbunn).
+ * wanakana 는 nn 을 곧이곧대로 んん 으로 바꾸므로 한 번 줄여야 한다.
+ * 단 nn 뒤에 모음이나 y 가 오면 ん + な행/や행 이라 그대로 두어야 한다
+ * (annai -> あんない, mannaka -> まんなか).
+ */
+function fromImeRomaji(romaji: string): string {
+  return romaji.replace(/nn(?![aiueoy])/g, "n");
+}
+
 /**
  * 조합이 끝났을 때 모아둔 로마자로 읽기 제안을 만든다.
  *
- * 확정 결과가 가나뿐이면(きっかけ, バランス) 표기 == 읽기라 제안이 필요 없다.
- * 변환 결과에 로마자가 남으면(키를 놓쳐 끝이 자음으로 끝난 경우) 제안하지 않는다.
+ * 표기에 한자가 없으면 제안하지 않는다. 두 가지를 한꺼번에 걸러낸다.
+ *   - 가나뿐인 단어(きっかけ, バランス)는 표기 == 읽기라 제안이 불필요하다.
+ *   - 한국어 IME 는 음절마다 compositionend 가 자동으로 발생한다. 한자가 없으므로 여기서 걸린다.
+ *
+ * 변환 결과에 로마자가 남으면(키를 놓쳐 자음으로 끝난 경우) 제안하지 않는다.
  * 어설픈 추정을 내놓느니 비워두는 편이 낫다.
  */
 export function readingFromRomaji(romaji: string, confirmedSurface: string): string | null {
   if (!romaji) return null;
-  if (isAllKana(confirmedSurface)) return null;
-  const kana = normalizeReading(romaji);
+  if (!HAS_KANJI.test(confirmedSurface)) return null;
+  const kana = normalizeReading(fromImeRomaji(romaji));
   return kana && isAllKana(kana) ? kana : null;
 }

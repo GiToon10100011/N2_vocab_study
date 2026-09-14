@@ -6,13 +6,7 @@ import { PasteForm } from "./PasteForm";
 import { WordEditDialog } from "../WordEditDialog";
 import { deleteWordAction } from "@/lib/actions/words";
 import { addWordAction, lookupSurfaceAction } from "@/lib/actions/words";
-import {
-  composedReading,
-  hasNonKana,
-  isAllKana,
-  normalizeReading,
-  toKatakanaReading,
-} from "@/lib/kana";
+import { hasNonKana, isAllKana, normalizeReading, toKatakanaReading } from "@/lib/kana";
 import { addDays, diffDays, stageLabel } from "@/lib/srs";
 import type { StudyDayGroup, Word } from "@/lib/types";
 
@@ -56,8 +50,6 @@ export function AddForm({
   const [editing, setEditing] = useState<Word | null>(null);
   /** 표기 칸이 IME 조합 중인가. 조합 중에는 값이 가나라서 "가나 전용 단어"로 오판하면 안 된다. */
   const [composingSurface, setComposingSurface] = useState(false);
-  /** 한자 확정 후 읽기를 자동으로 채웠는가. 확인이 필요하다는 표시에 쓴다. */
-  const [guessed, setGuessed] = useState(false);
   const [dupes, setDupes] = useState<Word[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -68,12 +60,6 @@ export function AddForm({
 
   // IME 조합 중에 눌린 Enter 는 "변환 확정"이므로 필드 이동에 쓰면 안 된다.
   const composing = useRef(false);
-  /** 조합 중 표기 칸에 떠 있던 마지막 가나. 변환 직전 상태가 곧 읽기다. */
-  const kanaGuess = useRef("");
-  /** 한 단어를 여러 번 조합해 입력하는 경우를 위해 누적한다(普 + 及). */
-  const accumKana = useRef("");
-  /** 사용자가 읽기 칸을 직접 건드렸으면 자동 채움을 멈춘다. */
-  const readingTouched = useRef(false);
 
   const focus = (f: Field) => {
     const el = f === "surface" ? surfaceRef : f === "reading" ? readingRef : meaningRef;
@@ -102,10 +88,6 @@ export function AddForm({
     setReading("");
     setMeaning("");
     setDupes([]);
-    setGuessed(false);
-    kanaGuess.current = "";
-    accumKana.current = "";
-    readingTouched.current = false;
     focus("surface");
   }, []);
 
@@ -286,34 +268,14 @@ export function AddForm({
             value={surface}
             lang="ja"
             className="jp-md rounded-lg border border-border bg-surface px-4 py-3 outline-none focus:border-accent"
-            onChange={(e) => {
-              const v = e.target.value;
-              setSurface(v);
-              // 조합 중 값이 전부 가나면 그게 변환 전 읽기다. e.data 는 한 박자 늦게 오므로
-              // 이벤트 데이터 대신 실제 입력값을 본다.
-              if (composing.current && isAllKana(v)) kanaGuess.current = v;
-              if (v === "") {
-                kanaGuess.current = "";
-                accumKana.current = "";
-              }
-            }}
+            onChange={(e) => setSurface(e.target.value)}
             onCompositionStart={() => {
               composing.current = true;
               setComposingSurface(true);
             }}
-            onCompositionEnd={(e) => {
+            onCompositionEnd={() => {
               composing.current = false;
               setComposingSurface(false);
-              const suggestion = composedReading(kanaGuess.current, e.currentTarget.value);
-              kanaGuess.current = "";
-              if (suggestion) {
-                // 한 단어를 여러 번 조합해 넣는 경우(普 + 及)를 위해 이어 붙인다.
-                accumKana.current += suggestion;
-                if (!readingTouched.current) {
-                  setReading(accumKana.current);
-                  setGuessed(true);
-                }
-              }
             }}
             onKeyDown={(e) => onEnter(e, surfaceIsKana ? "meaning" : "reading")}
           />
@@ -325,10 +287,6 @@ export function AddForm({
             {surfaceIsKana ? (
               <span className="rounded bg-warn-bg px-1.5 py-0.5 text-xs text-warn">
                 가나 단어 · 표기와 같게 자동 확정
-              </span>
-            ) : guessed ? (
-              <span className="rounded bg-warn-bg px-1.5 py-0.5 text-xs text-warn">
-                입력한 가나에서 자동 추정 · 맞는지 확인하세요
               </span>
             ) : (
               <span className="text-xs">로마자로 치세요 · fukyuu → ふきゅう</span>
@@ -346,11 +304,7 @@ export function AddForm({
             className={`jp-md rounded-lg border bg-surface px-4 py-3 outline-none focus:border-accent ${
               surfaceIsKana ? "border-border text-muted" : "border-border"
             }`}
-            onChange={(e) => {
-              readingTouched.current = true;
-              setGuessed(false);
-              setReading(e.target.value);
-            }}
+            onChange={(e) => setReading(e.target.value)}
             onCompositionStart={() => {
               composing.current = true;
             }}

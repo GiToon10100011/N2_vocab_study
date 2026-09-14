@@ -55,4 +55,7 @@ writeFileSync(
   JSON.stringify({ backed_up_at: new Date().toISOString(), words, reviews }, null, 2) + "\n",
 );
 
+// 앱이 "마지막 백업" 을 보고 경고할 수 있도록 심장박동을 남긴다.
+await sql.query(`update settings set last_backup_at = now() where id = 1`);
+
 console.log(`words ${words}행 · reviews ${reviews}행 -> ${outDir}/`);

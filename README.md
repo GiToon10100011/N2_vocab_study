@@ -130,7 +130,7 @@ npm run test:db      # 실제 Neon 왕복 12개 (ＺＺ 네임스페이스, 자�
 npm run test:e2e     # 브라우저 E2E 15개 (격리 DB n2v_e2e 에서 실행)
 npm run test:load    # 부하 테스트 (Neon 브랜치 필요 — 아래 참고)
 npm run typecheck    # tsc --noEmit
-npm run db:migrate   # 스키마 적용 (멱등)
+npm run db:migrate   # 스키마 적용 (멱등) · -- --all 로 E2E DB 까지
 npm run db:seed      # 예시 단어 10개 넣기 (-- --clear 로 제거)
 npm run icons        # PWA 아이콘 재생성
 npm run build        # 프로덕션 빌드
@@ -144,6 +144,8 @@ npm run build        # 프로덕션 빌드
 Neon 무료 플랜은 시점 복구 보존 기간이 짧아서 **자동 백업을 걸어뒀다.**
 
 `.github/workflows/backup.yml` 이 매일 05:00 KST 에 DB 를 덤프해 `backups/` 에 커밋한다.
+백업이 성공하면 `settings.last_backup_at` 에 시각을 남기고, 2일 넘게 갱신되지 않으면
+홈 화면에 경고 배너가 뜬다. 실제로 Actions 가 3일간 실패하는 동안 앱에는 아무 표시가 없었다.
 데이터가 바뀌지 않은 날은 커밋하지 않으므로 히스토리가 그대로 "공부한 날"의 목록이 된다.
 아무 날짜로나 되돌릴 수 있다 — 복원 방법은 `backups/README.md` 참고.
 

@@ -6,7 +6,14 @@ import { PasteForm } from "./PasteForm";
 import { WordEditDialog } from "../WordEditDialog";
 import { deleteWordAction } from "@/lib/actions/words";
 import { addWordAction, lookupSurfaceAction } from "@/lib/actions/words";
-import { hasNonKana, isAllKana, normalizeReading, toKatakanaReading } from "@/lib/kana";
+import {
+  hasNonKana,
+  isAllKana,
+  normalizeReading,
+  pushRomajiKey,
+  readingFromRomaji,
+  toKatakanaReading,
+} from "@/lib/kana";
 import { addDays, diffDays, stageLabel } from "@/lib/srs";
 import type { StudyDayGroup, Word } from "@/lib/types";
 
@@ -50,6 +57,8 @@ export function AddForm({
   const [editing, setEditing] = useState<Word | null>(null);
   /** 표기 칸이 IME 조합 중인가. 조합 중에는 값이 가나라서 "가나 전용 단어"로 오판하면 안 된다. */
   const [composingSurface, setComposingSurface] = useState(false);
+  /** 표기 칸에서 잡아낸 로마자와 그걸로 만든 읽기 제안. 맞는지 눈으로 확인하라고 같이 보여준다. */
+  const [guess, setGuess] = useState<{ romaji: string; kana: string } | null>(null);
   const [dupes, setDupes] = useState<Word[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -60,6 +69,12 @@ export function AddForm({
 
   // IME 조합 중에 눌린 Enter 는 "변환 확정"이므로 필드 이동에 쓰면 안 된다.
   const composing = useRef(false);
+  /** 표기 칸에서 눌린 물리 키를 로마자로 모은다. IME 표시와 무관하게 온전하다. */
+  const romaji = useRef("");
+  /** 한 단어를 여러 번 조합해 넣는 경우(普 + 及) 읽기를 이어 붙인다. */
+  const accumKana = useRef("");
+  /** 읽기 칸을 직접 건드렸으면 자동 채움을 멈춘다. */
+  const readingTouched = useRef(false);
 
   const focus = (f: Field) => {
     const el = f === "surface" ? surfaceRef : f === "reading" ? readingRef : meaningRef;
@@ -88,6 +103,10 @@ export function AddForm({
     setReading("");
     setMeaning("");
     setDupes([]);
+    setGuess(null);
+    romaji.current = "";
+    accumKana.current = "";
+    readingTouched.current = false;
     focus("surface");
   }, []);
 
@@ -268,16 +287,36 @@ export function AddForm({
             value={surface}
             lang="ja"
             className="jp-md rounded-lg border border-border bg-surface px-4 py-3 outline-none focus:border-accent"
-            onChange={(e) => setSurface(e.target.value)}
+            onChange={(e) => {
+              setSurface(e.target.value);
+              if (e.target.value === "") {
+                romaji.current = "";
+                accumKana.current = "";
+                setGuess(null);
+              }
+            }}
             onCompositionStart={() => {
               composing.current = true;
               setComposingSurface(true);
             }}
-            onCompositionEnd={() => {
+            onCompositionEnd={(e) => {
               composing.current = false;
               setComposingSurface(false);
+              const typed = romaji.current;
+              romaji.current = "";
+              const kana = readingFromRomaji(typed, e.currentTarget.value);
+              if (!kana) return;
+              accumKana.current += kana;
+              if (!readingTouched.current) {
+                setReading(accumKana.current);
+                setGuess({ romaji: typed, kana: accumKana.current });
+              }
             }}
-            onKeyDown={(e) => onEnter(e, surfaceIsKana ? "meaning" : "reading")}
+            onKeyDown={(e) => {
+              // IME 가 키를 가로채도 code 는 물리 키를 그대로 알려준다.
+              romaji.current = pushRomajiKey(romaji.current, e.code);
+              onEnter(e, surfaceIsKana ? "meaning" : "reading");
+            }}
           />
         </label>
 
@@ -287,6 +326,10 @@ export function AddForm({
             {surfaceIsKana ? (
               <span className="rounded bg-warn-bg px-1.5 py-0.5 text-xs text-warn">
                 가나 단어 · 표기와 같게 자동 확정
+              </span>
+            ) : guess ? (
+              <span className="rounded bg-warn-bg px-1.5 py-0.5 text-xs text-warn tabular-nums">
+                표기에서 친 {guess.romaji} 로 자동 채움 · 맞는지 확인하세요
               </span>
             ) : (
               <span className="text-xs">로마자로 치세요 · fukyuu → ふきゅう</span>
@@ -304,7 +347,11 @@ export function AddForm({
             className={`jp-md rounded-lg border bg-surface px-4 py-3 outline-none focus:border-accent ${
               surfaceIsKana ? "border-border text-muted" : "border-border"
             }`}
-            onChange={(e) => setReading(e.target.value)}
+            onChange={(e) => {
+              readingTouched.current = true;
+              setGuess(null);
+              setReading(e.target.value);
+            }}
             onCompositionStart={() => {
               composing.current = true;
             }}

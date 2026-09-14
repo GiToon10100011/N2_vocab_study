@@ -35,3 +35,21 @@ export function toKatakanaReading(input: string): string {
   const t = normalizeReading(input);
   return t.length > 0 ? toKatakana(t) : t;
 }
+
+/**
+ * IME 조합이 끝났을 때 읽기 칸에 채울 제안을 만든다.
+ *
+ * @param kanaSeen  조합 중 표기 칸에 떠 있던 마지막 가나(= 변환 전 상태)
+ * @param confirmed 조합이 확정된 뒤의 표기
+ *
+ * 확정 결과가 가나뿐이면(きっかけ, バランス) 표기와 읽기가 같으므로 제안하지 않는다.
+ * 한자가 섞였다면 변환 전 가나가 곧 그 단어의 읽기다.
+ *
+ * 이 제안은 어디까지나 추정이다. 화면에 그대로 보여주고 고칠 수 있게 해야 하며,
+ * 조용히 저장되면 안 된다 — ふきゅう 가 ふきゅ 로 잘려 들어간 적이 있다.
+ */
+export function composedReading(kanaSeen: string, confirmed: string): string | null {
+  if (!kanaSeen || !isAllKana(kanaSeen)) return null;
+  if (isAllKana(confirmed)) return null;
+  return kanaSeen;
+}

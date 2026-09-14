@@ -19,19 +19,33 @@ jobs:
   backup:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: "22"
           cache: npm
 
-      - run: npm ci
+      # 백업에 필요한 건 @neondatabase/serverless 와 papaparse 뿐이다.
+      # 개발 의존성(Playwright, Lighthouse)까지 받으면 느리고 실패할 여지만 늘어난다.
+      - run: npm ci --omit=dev
 
       - name: 덤프
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        run: node scripts/backup.mjs backups
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error::DATABASE_URL 시크릿이 비어 있습니다."
+            exit 1
+          fi
+          node scripts/backup.mjs backups
+          # 덤프가 실제로 내용을 담았는지 확인한다. 헤더만 있는 파일을 커밋하면
+          # 백업이 도는 것처럼 보이면서 실은 비어 있게 된다.
+          node -e '
+            const m = require("./backups/meta.json");
+            console.log(`words ${m.words} · reviews ${m.reviews}`);
+            if (m.words === 0) { console.error("::error::단어가 0개입니다. 연결 대상을 확인하세요."); process.exit(1); }
+          ' 
 
       - name: 변경이 있을 때만 커밋
         run: |

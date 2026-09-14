@@ -83,7 +83,7 @@ export default async function HomePage() {
               href="/study"
               className="rounded-xl bg-accent px-6 py-3.5 text-base font-semibold text-accent-fg whitespace-nowrap"
             >
-              시작 <span className="text-xs font-normal opacity-70">(Enter)</span>
+              시작 <span className="text-xs font-normal opacity-90">(Enter)</span>
             </Link>
           </div>
 

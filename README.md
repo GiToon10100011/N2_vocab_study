@@ -125,8 +125,10 @@ N주차는 가장 이른 학습일을 기준으로 7일 단위로 자동 계산�
 
 ```bash
 npm run dev          # 개발 서버
-npm test             # 순수 로직 테스트 50개
-npm run test:db      # 실제 Neon DB 왕복 테스트 12개
+npm test             # 순수 로직 59개 (SRS·읽기 변환·파서·카드 누출)
+npm run test:db      # 실제 Neon 왕복 12개 (ＺＺ 네임스페이스, 자동 정리)
+npm run test:e2e     # 브라우저 E2E 15개 (격리 DB n2v_e2e 에서 실행)
+npm run test:load    # 부하 테스트 (Neon 브랜치 필요 — 아래 참고)
 npm run typecheck    # tsc --noEmit
 npm run db:migrate   # 스키마 적용 (멱등)
 npm run db:seed      # 예시 단어 10개 넣기 (-- --clear 로 제거)
@@ -154,6 +156,52 @@ CSV 는 앞 3열(`surface,reading,meaning_ko`)만 떼면 Anki/Quizlet 으로도 
 
 > 이 저장소는 공개다. `backups/` 의 단어 목록과 학습 기록도 함께 공개된다.
 > 비공개로 바꾸려면 `gh repo edit --visibility private` 하면 된다(설정 변경은 불필요).
+
+## 테스트 격리
+
+세션 테스트는 키를 눌러 카드를 **실제로 채점**한다. 운영 DB 에서 돌리면 큐에 섞여 들어온
+진짜 단어의 복습 주기가 바뀐다. 그래서 계층별로 대상을 분리했다.
+
+| 명령 | 대상 | 정리 |
+|---|---|---|
+| `npm test` | 없음 (순수 함수) | — |
+| `npm run test:db` | 운영 DB | 전각 `ＺＺ` 네임스페이스만 쓰고 자동 삭제 |
+| `npm run test:e2e` | 별도 DB `n2v_e2e` | 매 테스트 전 truncate |
+| `npm run test:load` | Neon 브랜치 | 브랜치째 삭제 |
+
+부하 테스트는 브랜치를 먼저 만들어야 한다.
+
+```bash
+neon branches create --project-id <id> --name loadtest
+neon connection-string loadtest --project-id <id> --database-name neondb --pooled > /tmp/loadtest_url
+npm run test:load
+neon branches delete loadtest --project-id <id>
+```
+
+## 측정 결과
+
+단어 1만 개(Neon 브랜치, 로컬에서 us-east-2 접속 — 왕복 지연 약 210ms 포함):
+
+```
+큐 후보 조회      454ms      큐 구성(순수함수)   5ms / 210장
+오늘 카운트       629ms      전체 목록          662ms
+학습일 그룹       226ms      텍스트 검색        233ms
+CSV export      1,476ms      export 크기        3.1MB
+```
+
+브라우저 측정(단어 2,000개):
+
+```
+카드 전환        2.8ms      20장 넘기는 동안 조회 요청 0건
+/study 응답       63KB
+```
+
+**세션 중 네트워크 왕복이 없다는 설계 전제가 실제로 검증됐다.** 카드 전환에 나가는 요청은
+5장짜리 채점 배치뿐이다.
+
+Lighthouse(desktop): 접근성 100 · 권장사항 100 · 성능 66~72.
+성능 점수는 로컬 측정이라 이 머신에서 Neon 까지의 왕복이 쿼리마다 붙는다.
+운영은 Vercel iad1 과 Neon us-east-2 가 같은 지역이라 그대로 재현되지 않는다.
 
 ## PWA
 

@@ -23,8 +23,8 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
-  // 홈 화면에서 실행했을 때 노치 영역까지 배경을 채운다
+  // 확대를 막지 않는다. 한자를 크게 보려는 사용자를 가로막을 이유가 없고,
+  // maximum-scale 제한은 접근성 검사에서도 실패한다.
   viewportFit: "cover",
   themeColor: [
     { media: "(prefers-color-scheme: light)", color: "#fbfbfa" },

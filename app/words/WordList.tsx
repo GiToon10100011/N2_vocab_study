@@ -125,6 +125,7 @@ export function WordList({
         <select
           value={day}
           onChange={(e) => setDay(e.target.value)}
+          aria-label="학습일로 거르기"
           className="rounded-full border border-border bg-surface px-2 py-1 text-xs text-muted"
         >
           <option value="">모든 학습일</option>

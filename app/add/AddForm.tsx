@@ -208,6 +208,7 @@ export function AddForm({
           type="date"
           value={studyDay}
           onChange={(e) => e.target.value && setStudyDay(e.target.value)}
+          aria-label="학습일"
           className="rounded-md border border-border bg-bg px-2 py-1 text-sm"
         />
         <button

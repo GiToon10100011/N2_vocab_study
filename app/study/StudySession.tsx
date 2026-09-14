@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { RETRY_GAP } from "@/lib/srs";
 import { suspendWordAction, updateWordAction } from "@/lib/actions/words";
@@ -9,6 +10,13 @@ import { CardFace, type SessionCard } from "./CardFace";
 import type { GradeInput, PromptType, QueueCard, QueueWord } from "@/lib/types";
 
 const FLUSH_AT = 5;
+/**
+ * 마지막 채점 후 이 시간이 지나면 남은 것을 보낸다.
+ * 언로드(pagehide/sendBeacon) 전송은 헤드리스 환경에서 큐잉 성공을 반환하고도
+ * 서버에 도달하지 않는 것을 E2E 로 확인했다. 언로드에 기대지 않고,
+ * 채점이 서버에 머무르지 않는 시간을 이 값으로 묶어둔다.
+ */
+const IDLE_FLUSH_MS = 5000;
 const FAILED_KEY = "n2v_pending_grades";
 
 /* ---------- 전송 실패분 보관 (네트워크가 끊겨도 채점을 잃지 않는다) ---------- */
@@ -52,6 +60,19 @@ interface Handlers {
   edit(): void;
 }
 
+/** 언로드 중 동기 전송. 성공적으로 큐에 넣었으면 true. */
+function beacon(batch: PendingBatch): boolean {
+  try {
+    const body = new Blob(
+      [JSON.stringify({ grades: batch.grades, practice: batch.practice })],
+      { type: "application/json" },
+    );
+    return navigator.sendBeacon("/api/grades", body);
+  } catch {
+    return false;
+  }
+}
+
 interface Snapshot {
   queue: SessionCard[];
   index: number;
@@ -81,16 +102,32 @@ export function StudySession({
   const [canUndo, setCanUndo] = useState(false);
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
+  const router = useRouter();
 
   const pendingRef = useRef<GradeInput[]>([]);
   const snapsRef = useRef<Snapshot[]>([]);
   const retryCountRef = useRef(0);
+  const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  /** 순수 전송. 상태를 건드리지 않으므로 effect 안에서도 안전하다. */
-  const sendBatches = useCallback(async (batches: PendingBatch[], keepalive = false) => {
+  /**
+   * 순수 전송. 상태를 건드리지 않으므로 effect 안에서도 안전하다.
+   *
+   * unload = true 는 탭을 닫거나 다른 화면으로 넘어가는 순간이다.
+   * fetch(keepalive) 는 이때 실제로 전달되지 않는 것을 E2E 로 확인했다.
+   * 언로드 중 전송의 정식 API 인 sendBeacon 을 쓰고, 큐에 넣지 못한 배치만
+   * localStorage 에 남겨 다음 세션에서 다시 올린다(둘 다 동기라 언로드를 견딘다).
+   */
+  const sendBatches = useCallback(async (batches: PendingBatch[], unload = false) => {
     const pending = batches.filter((b) => b.grades.length > 0);
     if (pending.length === 0) return;
     clearFailed();
+
+    if (unload) {
+      const failed = pending.filter((b) => !beacon(b));
+      if (failed.length > 0) saveFailed(failed);
+      return;
+    }
+
     const failed: PendingBatch[] = [];
     for (const batch of pending) {
       try {
@@ -98,7 +135,6 @@ export function StudySession({
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ grades: batch.grades, practice: batch.practice }),
-          keepalive,
         });
         if (!res.ok) throw new Error(String(res.status));
       } catch {
@@ -110,11 +146,15 @@ export function StudySession({
 
   /** 모아둔 채점을 비우고 보낸다. 되돌리기는 여기서 끝난다. */
   const flushPending = useCallback(
-    (keepalive = false) => {
+    (unload = false) => {
+      if (idleTimer.current) {
+        clearTimeout(idleTimer.current);
+        idleTimer.current = null;
+      }
       const mine = pendingRef.current;
       pendingRef.current = [];
       snapsRef.current = [];
-      void sendBatches([...loadFailed(), { practice, grades: mine }], keepalive);
+      void sendBatches([...loadFailed(), { practice, grades: mine }], unload);
     },
     [sendBatches, practice],
   );
@@ -157,12 +197,19 @@ export function StudySession({
   function record(g: GradeInput) {
     // 연습 퀴즈도 기록은 한다. 복습 주기는 안 바뀌지만 오답은 오답노트에 남아야 한다.
     pendingRef.current.push(g);
+    if (idleTimer.current) clearTimeout(idleTimer.current);
+
     if (pendingRef.current.length >= FLUSH_AT) {
       flushPending();
       setCanUndo(false);
-    } else {
-      setCanUndo(true);
+      return;
     }
+    setCanUndo(true);
+    // 손을 멈추면 곧 보낸다. 되돌리기도 여기까지만 가능하다.
+    idleTimer.current = setTimeout(() => {
+      flushPending();
+      setCanUndo(false);
+    }, IDLE_FLUSH_MS);
   }
 
   function advance(nextQueue: SessionCard[], nextIndex: number) {
@@ -229,6 +276,17 @@ export function StudySession({
     setFinished(false);
     setRevealed(true);
     setCanUndo(snapsRef.current.length > 0);
+  }
+
+  /** 앱 안에서 세션을 떠나는 경로. 언로드에 기대지 않고 확실히 보내고 이동한다. */
+  async function leave() {
+    if (idleTimer.current) clearTimeout(idleTimer.current);
+    const mine = pendingRef.current;
+    pendingRef.current = [];
+    snapsRef.current = [];
+    setCanUndo(false);
+    await sendBatches([...loadFailed(), { practice, grades: mine }]);
+    router.push("/");
   }
 
   async function onSuspend() {
@@ -381,14 +439,14 @@ export function StudySession({
             onClick={onLearnNext}
             className="w-full rounded-xl bg-accent px-6 py-5 text-lg font-semibold text-accent-fg"
           >
-            다음 <span className="text-sm font-normal opacity-70">(Space)</span>
+            다음 <span className="text-sm font-normal opacity-90">(Space)</span>
           </button>
         ) : !revealed ? (
           <button
             onClick={() => setRevealed(true)}
             className="w-full rounded-xl bg-accent px-6 py-5 text-lg font-semibold text-accent-fg"
           >
-            정답 보기 <span className="text-sm font-normal opacity-70">(Space)</span>
+            정답 보기 <span className="text-sm font-normal opacity-90">(Space)</span>
           </button>
         ) : (
           <div className="grid grid-cols-2 gap-3">
@@ -396,7 +454,7 @@ export function StudySession({
               onClick={() => onGrade(true)}
               className="rounded-xl bg-accent px-4 py-5 text-lg font-semibold text-accent-fg"
             >
-              알았음 <span className="text-sm font-normal opacity-70">(1)</span>
+              알았음 <span className="text-sm font-normal opacity-90">(1)</span>
             </button>
             <button
               onClick={() => onGrade(false)}
@@ -408,9 +466,12 @@ export function StudySession({
         )}
 
         <div className="mt-4 flex items-center justify-between text-xs text-muted">
-          <Link href="/" className="underline underline-offset-4">
+          <button
+            onClick={() => void leave()}
+            className="underline underline-offset-4"
+          >
             나가기
-          </Link>
+          </button>
           <span className="flex gap-4">
             <button onClick={onUndo} disabled={!canUndo} className="underline underline-offset-4 disabled:opacity-30">
               되돌리기 (U)

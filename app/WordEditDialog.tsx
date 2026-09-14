@@ -140,6 +140,7 @@ export function WordEditDialog({
             <input
               type="date"
               value={day}
+              aria-label="학습일"
               onChange={(e) => e.target.value && setDay(e.target.value)}
               className="rounded-lg border border-border bg-bg px-3 py-2.5 text-sm outline-none focus:border-accent"
             />

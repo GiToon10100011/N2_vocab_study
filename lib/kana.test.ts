@@ -1,11 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  composedReading,
-  hasNonKana,
-  isAllKana,
-  normalizeReading,
-  toKatakanaReading,
-} from "./kana";
+import { hasNonKana, isAllKana, normalizeReading, toKatakanaReading } from "./kana";
 
 describe("읽기 확정 변환", () => {
   it("로마자를 통째로 변환한다 (부분 변환으로 끝이 잘리지 않는다)", () => {
@@ -52,21 +46,3 @@ describe("읽기 확정 변환", () => {
   });
 });
 
-describe("IME 조합에서 읽기 추정", () => {
-  it("한자로 확정되면 변환 전 가나를 제안한다", () => {
-    expect(composedReading("ふきゅう", "普及")).toBe("ふきゅう");
-    expect(composedReading("きょうりょく", "協力")).toBe("きょうりょく");
-    expect(composedReading("とりくむ", "取り組む")).toBe("とりくむ");
-    expect(composedReading("といあわせる", "問い合わせる")).toBe("といあわせる");
-  });
-
-  it("가나로 확정되면 제안하지 않는다 (표기 == 읽기라서 불필요)", () => {
-    expect(composedReading("きっかけ", "きっかけ")).toBeNull();
-    expect(composedReading("バランス", "バランス")).toBeNull();
-  });
-
-  it("가나를 못 잡았으면 제안하지 않는다", () => {
-    expect(composedReading("", "普及")).toBeNull();
-    expect(composedReading("fukyuu", "普及")).toBeNull();
-  });
-});

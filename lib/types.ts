@@ -98,4 +98,6 @@ export interface AppSettings {
   reviewLimit: number;
   weights: PromptWeights;
   dayStartHour: number;
+  /** 마지막 자동 백업 시각(ISO). 백업이 멈춘 것을 앱에서 알아채기 위한 값. */
+  lastBackupAt: string | null;
 }

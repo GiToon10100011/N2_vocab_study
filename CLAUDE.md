@@ -51,11 +51,15 @@ proxy.ts           비밀번호 게이트 (Next 16 에서 middleware 는 proxy �
 - 하루 경계는 04:00(`APP_TIMEZONE`). `studyDate()` 를 쓰고 `new Date()` 로 날짜를 만들지 않는다.
 - `lib/srs.ts` 를 고쳤으면 `npm test` 가 반드시 통과해야 한다.
 
+- **스키마를 바꾸면 `npm run db:migrate -- --all`** 로 돌린다. E2E 는 별도 데이터베이스
+  (`n2v_e2e`)를 쓰므로 한쪽만 갱신하면 브라우저 테스트가 통째로 깨진다.
+
 ## 검증
 
 ```bash
 npm test          # 50개 (SRS 전이표, 유형 분포, 큐, 읽기 변환, 파서, 카드 누출)
 npm run test:db   # 12개 (실제 Neon 왕복)
+npm run test:e2e  # 15개 (브라우저, 격리 DB)
 npm run typecheck
 npx eslint .
 npm run build

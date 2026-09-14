@@ -76,4 +76,8 @@ create table if not exists settings (
   constraint settings_day_start check (day_start_hour between 0 and 12)
 );
 
+-- 마지막 백업 시각. 백업이 조용히 멈추는 것을 앱에서 알아채기 위한 심장박동이다.
+-- 실제로 GitHub Actions 가 3일간 실패하는 동안 앱에서는 아무 표시도 없었다.
+alter table settings add column if not exists last_backup_at timestamptz;
+
 insert into settings (id) values (1) on conflict (id) do nothing;

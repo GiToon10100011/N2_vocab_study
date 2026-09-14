@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { HomeKeys } from "./HomeKeys";
 import { SetupNotice } from "./SetupNotice";
+import { BackupWarning } from "./BackupWarning";
 import { GroupList } from "./GroupList";
 import {
   fetchPeriodStats,
@@ -25,11 +26,13 @@ function formatKoreanDate(ymd: string): string {
 export default async function HomePage() {
   let today: string;
   let newLimit: number;
+  let lastBackupAt: string | null;
   let counts, week, weakTotal, days, wrongTotal;
   try {
     const s = await getSettingsAndToday();
     today = s.today;
     newLimit = s.settings.newLimit;
+    lastBackupAt = s.settings.lastBackupAt;
     [counts, week, weakTotal, days, wrongTotal] = await Promise.all([
       fetchTodayCounts(today),
       fetchPeriodStats(studyDayStart(addDays(today, -6)).toISOString()),
@@ -108,6 +111,8 @@ export default async function HomePage() {
           </div>
         </section>
       )}
+
+      <BackupWarning lastBackupAt={lastBackupAt} />
 
       {wrongTotal > 0 && (
         <Link

@@ -102,9 +102,10 @@ export async function fetchHomophoneCounts(): Promise<Record<string, number>> {
 
 export async function fetchSettings(): Promise<AppSettings> {
   const rows = (await db().query(
-    `select new_limit, review_limit, weight_s2r, weight_s2m, weight_r2m, day_start_hour
+    `select new_limit, review_limit, weight_s2r, weight_s2m, weight_r2m, day_start_hour,
+            to_char(last_backup_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as last_backup_at
        from settings where id = 1`,
-  )) as Record<string, number>[];
+  )) as Record<string, number | string | null>[];
   const r = rows[0];
   if (!r) {
     return {
@@ -112,13 +113,16 @@ export async function fetchSettings(): Promise<AppSettings> {
       reviewLimit: DEFAULT_REVIEW_LIMIT,
       weights: { ...DEFAULT_WEIGHTS },
       dayStartHour: DAY_START_HOUR,
+      lastBackupAt: null,
     };
   }
+  const num = (k: string) => Number(r[k]);
   return {
-    newLimit: r.new_limit,
-    reviewLimit: r.review_limit,
-    weights: { s2r: r.weight_s2r, s2m: r.weight_s2m, r2m: r.weight_r2m },
-    dayStartHour: r.day_start_hour,
+    newLimit: num("new_limit"),
+    reviewLimit: num("review_limit"),
+    weights: { s2r: num("weight_s2r"), s2m: num("weight_s2m"), r2m: num("weight_r2m") },
+    dayStartHour: num("day_start_hour"),
+    lastBackupAt: (r.last_backup_at as string | null) ?? null,
   };
 }
 

@@ -29,6 +29,8 @@ export async function saveSettingsAction(input: AppSettings): Promise<AppSetting
     reviewLimit: clamp(input.reviewLimit, 10, 1000),
     weights,
     dayStartHour: clamp(input.dayStartHour, 0, 12),
+    // 백업 시각은 백업 작업만 갱신한다. 설정 저장으로 덮어쓰지 않는다.
+    lastBackupAt: input.lastBackupAt,
   };
 
   await saveSettings(next);

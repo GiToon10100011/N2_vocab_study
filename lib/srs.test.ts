@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   LADDER,
+  MAX_NEW_IN_QUEUE,
   MAX_STAGE,
   addDays,
   allowedTypes,
@@ -281,9 +282,9 @@ describe("오늘의 큐", () => {
       ),
       word({ id: "sus", stage: 0, suspended: true }),
     ];
-    const q = buildQueue({ words, today: TODAY, readingCounts, rand: () => 0.5 });
+    const q = buildQueue({ words, today: TODAY, readingCounts, newLimit: 30, rand: () => 0.5 });
     const newCards = q.filter((c) => c.kind === "learn");
-    expect(newCards).toHaveLength(30); // newLimit
+    expect(newCards).toHaveLength(30); // 명시한 상한
     const reviewCards = q.filter((c) => c.word.id.startsWith("r"));
     expect(reviewCards).toHaveLength(150); // reviewLimit
     expect(q.some((c) => c.word.id === "sus")).toBe(false);
@@ -409,5 +410,30 @@ describe("연습 퀴즈 채점", () => {
       false,
     );
     expect(plan[0].schedule).toEqual({ stage: 1, next_review: addDays(TODAY, 1) });
+  });
+});
+
+describe("신규 단어 상한", () => {
+  const readingCounts = {};
+  const many = Array.from({ length: 45 }, (_, i) =>
+    word({ id: `n${i}`, stage: 0, created_at: `2026-09-11T${String(i).padStart(2, "0")}:00:00Z` }),
+  );
+
+  it("상한 0 이면 그날 등록한 단어가 전부 나온다", () => {
+    const q = buildQueue({ words: many, today: TODAY, readingCounts, newLimit: 0, rand: () => 0.5 });
+    expect(q.filter((c) => c.kind === "learn")).toHaveLength(45);
+  });
+
+  it("상한을 정하면 그만큼만 나온다", () => {
+    const q = buildQueue({ words: many, today: TODAY, readingCounts, newLimit: 20, rand: () => 0.5 });
+    expect(q.filter((c) => c.kind === "learn")).toHaveLength(20);
+  });
+
+  it("제한이 없어도 페이로드 안전장치는 남는다", () => {
+    const huge = Array.from({ length: MAX_NEW_IN_QUEUE + 50 }, (_, i) =>
+      word({ id: `h${i}`, stage: 0, created_at: `2026-09-11T00:00:${String(i % 60).padStart(2, "0")}Z` }),
+    );
+    const q = buildQueue({ words: huge, today: TODAY, readingCounts, newLimit: 0, rand: () => 0.5 });
+    expect(q.filter((c) => c.kind === "learn")).toHaveLength(MAX_NEW_IN_QUEUE);
   });
 });

@@ -5,6 +5,7 @@ import {
   DEFAULT_NEW_LIMIT,
   DEFAULT_REVIEW_LIMIT,
   DEFAULT_WEIGHTS,
+  MAX_NEW_IN_QUEUE,
   WEAK_STREAK_MAX,
   WEAK_WRONG_THRESHOLD,
   diffDays,
@@ -76,7 +77,10 @@ export async function fetchStudyDays(today: string): Promise<StudyDayGroup[]> {
  * 큐 후보. 밀린 복습이 아무리 쌓여도 페이로드가 폭발하지 않도록 넉넉한 상한만 둔다.
  * 실제 상한(150 / 30)은 buildQueue 가 적용한다.
  */
-export async function fetchQueueCandidates(today: string): Promise<Word[]> {
+export async function fetchQueueCandidates(
+  today: string,
+  newLimit = MAX_NEW_IN_QUEUE,
+): Promise<Word[]> {
   const rows = await db().query(
     `(select ${WORD_COLS} from words
        where suspended = false and stage > 0 and next_review <= $1::date
@@ -84,8 +88,8 @@ export async function fetchQueueCandidates(today: string): Promise<Word[]> {
      union all
      (select ${WORD_COLS} from words
        where suspended = false and stage = 0
-       order by created_at asc limit 60)`,
-    [today],
+       order by created_at asc limit $2)`,
+    [today, Math.min(Math.max(newLimit, 1), MAX_NEW_IN_QUEUE)],
   );
   return rows as unknown as Word[];
 }

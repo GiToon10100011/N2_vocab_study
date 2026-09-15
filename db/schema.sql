@@ -62,7 +62,7 @@ create index if not exists reviews_wrong on reviews (word_id, reviewed_at desc) 
 -- 설정. 1인용이므로 항상 id = 1 한 행만 쓴다.
 create table if not exists settings (
   id              smallint primary key default 1,
-  new_limit       integer  not null default 30,
+  new_limit       integer  not null default 0,   -- 0 = 제한 없음
   review_limit    integer  not null default 150,
   weight_s2r      integer  not null default 60,
   weight_s2m      integer  not null default 25,

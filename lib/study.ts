@@ -17,7 +17,8 @@ export interface TodayQueue {
 export async function loadTodayQueue(skipNew: boolean): Promise<TodayQueue> {
   const { settings, today } = await getSettingsAndToday();
   const [words, readingCounts] = await Promise.all([
-    fetchQueueCandidates(today),
+    // 상한이 0(제한 없음)이면 조회 단계에서도 막지 않는다.
+    fetchQueueCandidates(today, settings.newLimit > 0 ? settings.newLimit : undefined),
     fetchHomophoneCounts(),
   ]);
   return {

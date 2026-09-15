@@ -25,6 +25,7 @@ export async function saveSettingsAction(input: AppSettings): Promise<AppSetting
   }
 
   const next: AppSettings = {
+    // 0 은 "제한 없음" 이다. 그날 등록한 단어를 개수와 무관하게 전부 출제한다.
     newLimit: clamp(input.newLimit, 0, 200),
     reviewLimit: clamp(input.reviewLimit, 10, 1000),
     weights,

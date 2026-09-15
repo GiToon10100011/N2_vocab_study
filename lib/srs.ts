@@ -20,7 +20,10 @@ export const MAX_STAGE = LADDER.length - 1;
 /** 출제 비율. 한자 -> 읽기가 약점이므로 가장 높게 둔다(기획 5.4). */
 export const DEFAULT_WEIGHTS: PromptWeights = { s2r: 60, s2m: 25, r2m: 15 };
 
-export const DEFAULT_NEW_LIMIT = 30;
+/** 하루 새 단어 상한. 0 이면 제한 없음 — 그날 넣은 단어는 개수와 무관하게 전부 나온다. */
+export const DEFAULT_NEW_LIMIT = 0;
+/** 큐에 실을 신규 단어의 절대 상한. 페이로드가 폭발하지 않게만 막는 안전장치다. */
+export const MAX_NEW_IN_QUEUE = 1000;
 export const DEFAULT_REVIEW_LIMIT = 150;
 
 /** 하루 경계. 새벽 2시 공부는 전날 분량으로 집계한다. */
@@ -298,7 +301,9 @@ export function buildQueue(input: BuildQueueInput): QueueCard[] {
     return { key: `${w.id}:q`, kind, word: qw, weak: isWeak(w) };
   });
 
-  const pickedNew = skipNew ? [] : newWords.slice(0, newLimit);
+  // newLimit 0 = 제한 없음. 그날 등록한 단어는 몇 개든 그날 세션에 나와야 한다.
+  const newCap = newLimit > 0 ? Math.min(newLimit, MAX_NEW_IN_QUEUE) : MAX_NEW_IN_QUEUE;
+  const pickedNew = skipNew ? [] : newWords.slice(0, newCap);
   const newBatches: QueueCard[][] = [];
   for (let i = 0; i < pickedNew.length; i += NEW_BATCH_SIZE) {
     const batch = pickedNew.slice(i, i + NEW_BATCH_SIZE);

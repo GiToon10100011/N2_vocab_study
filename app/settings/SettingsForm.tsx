@@ -66,20 +66,34 @@ export function SettingsForm({ initial }: { initial: AppSettings }) {
       <section className="mt-6 flex flex-col gap-4 rounded-xl border border-border bg-surface p-5">
         <h2 className="text-sm font-semibold">하루 분량</h2>
 
-        <label className="flex items-center justify-between gap-4">
-          <span className="text-sm">
-            새 단어 상한
-            <span className="ml-2 text-xs text-muted">하루에 처음 배울 단어 수</span>
-          </span>
-          <input
-            type="number"
-            min={0}
-            max={200}
-            value={s.newLimit}
-            onChange={(e) => setS({ ...s, newLimit: Number(e.target.value) })}
-            className="w-24 rounded-lg border border-border bg-bg px-3 py-2 text-right tabular-nums"
-          />
-        </label>
+        <div className="flex flex-col gap-2">
+          <label className="flex items-center justify-between gap-4">
+            <span className="text-sm">
+              새 단어 상한
+              <span className="ml-2 text-xs text-muted">
+                하루에 처음 배울 단어 수. 제한을 두지 않으면 그날 등록한 단어가 모두 나옵니다
+              </span>
+            </span>
+            <input
+              type="number"
+              min={1}
+              max={200}
+              disabled={s.newLimit === 0}
+              value={s.newLimit === 0 ? "" : s.newLimit}
+              placeholder="제한 없음"
+              onChange={(e) => setS({ ...s, newLimit: Number(e.target.value) })}
+              className="w-28 rounded-lg border border-border bg-bg px-3 py-2 text-right tabular-nums disabled:opacity-40"
+            />
+          </label>
+          <label className="flex items-center gap-2 text-sm text-muted">
+            <input
+              type="checkbox"
+              checked={s.newLimit === 0}
+              onChange={(e) => setS({ ...s, newLimit: e.target.checked ? 0 : 30 })}
+            />
+            제한 없음 (그날 등록한 단어를 전부 출제)
+          </label>
+        </div>
 
         <label className="flex items-center justify-between gap-4">
           <span className="text-sm">

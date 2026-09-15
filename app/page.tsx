@@ -44,7 +44,7 @@ export default async function HomePage() {
     return <SetupNotice message={err instanceof Error ? err.message : String(err)} />;
   }
 
-  const newToday = Math.min(counts.newCount, newLimit);
+  const newToday = newLimit > 0 ? Math.min(counts.newCount, newLimit) : counts.newCount;
   const total = newToday + counts.reviewCount;
   // "아직 단어가 없음"과 "오늘 할 일을 끝냄"은 완전히 다른 상태다.
   const empty = counts.totalWords === 0;

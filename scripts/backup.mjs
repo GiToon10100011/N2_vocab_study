@@ -41,7 +41,9 @@ async function dump(table, orderBy) {
   const rows = await sql.query(`select ${select} from "${table}" order by ${orderBy}`);
   const header = cols.map((c) => c.column_name);
   const body = rows.length > 0 ? Papa.unparse(rows, { columns: header }) : header.join(",");
-  writeFileSync(join(outDir, `${table}.csv`), "﻿" + body + "\n");
+  // 마지막 줄도 Papa.unparse 가 쓰는 CRLF 로 끝내야 한다. LF 로 끝내면 파서가 그 LF 를
+  // 마지막 칸의 값으로 읽어서(study_day = "2026-09-22\n") 복원 때 날짜 캐스팅이 깨진다.
+  writeFileSync(join(outDir, `${table}.csv`), "﻿" + body + "\r\n");
   return rows.length;
 }
 
@@ -49,13 +51,19 @@ mkdirSync(outDir, { recursive: true });
 
 const words = await dump("words", `created_at asc, id asc`);
 const reviews = await dump("reviews", `id asc`);
+// 오답노트는 손으로 적은 기록이라 다시 만들 수 없다. 단어·채점 로그보다 복구가 어렵다.
+const mistakes = await dump("mistakes", `id asc`);
 
 writeFileSync(
   join(outDir, "meta.json"),
-  JSON.stringify({ backed_up_at: new Date().toISOString(), words, reviews }, null, 2) + "\n",
+  JSON.stringify(
+    { backed_up_at: new Date().toISOString(), words, reviews, mistakes },
+    null,
+    2,
+  ) + "\n",
 );
 
 // 앱이 "마지막 백업" 을 보고 경고할 수 있도록 심장박동을 남긴다.
 await sql.query(`update settings set last_backup_at = now() where id = 1`);
 
-console.log(`words ${words}행 · reviews ${reviews}행 -> ${outDir}/`);
+console.log(`words ${words}행 · reviews ${reviews}행 · mistakes ${mistakes}행 -> ${outDir}/`);

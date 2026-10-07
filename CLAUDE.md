@@ -59,8 +59,8 @@ proxy.ts           비밀번호 게이트 (Next 16 에서 middleware 는 proxy �
 ## 검증
 
 ```bash
-npm test          # 50개 (SRS 전이표, 유형 분포, 큐, 읽기 변환, 파서, 카드 누출)
-npm run test:db   # 12개 (실제 Neon 왕복)
+npm test          # 62개 (SRS 전이표, 유형 분포, 큐, 읽기 변환, 파서, 카드 누출)
+npm run test:db   # 13개 (실제 Neon 왕복)
 npm run test:e2e  # 15개 (브라우저, 격리 DB)
 npm run typecheck
 npx eslint .

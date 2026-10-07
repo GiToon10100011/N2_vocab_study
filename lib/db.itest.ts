@@ -16,6 +16,7 @@ import {
 import { buildQueue, studyDate, addDays, studyDayStart } from "./srs";
 import { POST as gradesPOST } from "@/app/api/grades/route";
 import { GET as exportGET } from "@/app/api/export/route";
+import { POST as importPOST } from "@/app/api/import/route";
 
 const MARK = "__itest__";
 const TODAY = studyDate();
@@ -282,5 +283,31 @@ describe("실제 DB 왕복", () => {
     expect(data.version).toBe(1);
     expect(data.words.length).toBeGreaterThanOrEqual(FIXTURES.length);
     expect(data.reviews.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it("복원 CSV 의 마지막 줄이 LF 로 끝나도 학습일이 틀어지지 않는다", async () => {
+    // 2026-10-06 까지의 백업 스냅샷이 이 모양이다. 줄 구분은 CRLF 인데 마지막 줄만 LF 라서
+    // 파서가 마지막 칸을 "2026-09-22\n" 로 읽고, 날짜 검사에 걸려 조용히 오늘로 바뀌었다.
+    const day = addDays(TODAY, -30);
+    const csv =
+      "﻿" +
+      ["surface,reading,meaning_ko,note,study_day", `${P}復元,${P}ふくげん,복원,${MARK},${day}`].join(
+        "\r\n",
+      ) +
+      "\n";
+    const form = new FormData();
+    form.set("file", new File([csv], "words.csv", { type: "text/csv" }));
+
+    const res = await importPOST(
+      new Request("http://localhost/api/import", { method: "POST", body: form }),
+    );
+    expect(await res.json()).toMatchObject({ ok: true, added: 1, failed: 0 });
+
+    const rows = (await db().query(
+      `select to_char(study_day, 'YYYY-MM-DD') as study_day from words where surface = $1`,
+      [`${P}復元`],
+    )) as { study_day: string }[];
+    expect(rows).toHaveLength(1);
+    expect(rows[0].study_day).toBe(day);
   });
 });

@@ -1,5 +1,6 @@
 import { db } from "./db";
 import type { AppSettings, PromptType, StudyDayGroup, TodayCounts, Word } from "./types";
+import type { Mistake, MistakeDraft } from "./mistakes";
 import {
   DAY_START_HOUR,
   DEFAULT_NEW_LIMIT,
@@ -436,4 +437,43 @@ export async function fetchReviewLogsSince(since: string) {
     correct: boolean;
     in_session_retry: boolean;
   }[];
+}
+
+/* ------------------------------------------------------------------ *
+ * 오답노트 (문법·교재 오답). 단어의 오답 기록(wrong_count)과는 별개다
+ * ------------------------------------------------------------------ */
+
+// bigserial 은 드라이버가 문자열로 주기도 숫자로 주기도 한다. 문자열로 고정한다.
+const MISTAKE_COLS = `
+  id::text as id, source, ref, question, chosen, answer, why, category,
+  to_char(created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as created_at,
+  to_char(study_day, 'YYYY-MM-DD') as study_day,
+  to_char(resolved_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as resolved_at
+`;
+
+export async function insertMistake(
+  input: MistakeDraft & { study_day: string },
+): Promise<Mistake> {
+  const rows = await db().query(
+    `insert into mistakes (source, ref, question, chosen, answer, why, category, study_day)
+     values ($1, $2, $3, $4, $5, $6, $7, $8::date)
+     returning ${MISTAKE_COLS}`,
+    [
+      input.source,
+      input.ref,
+      input.question,
+      input.chosen,
+      input.answer,
+      input.why,
+      input.category,
+      input.study_day,
+    ],
+  );
+  return (rows as unknown as Mistake[])[0];
+}
+
+/** 가장 최근에 적은 오답의 출처와 문항 번호. 입력 폼이 이어서 적도록 기본값으로 쓴다. */
+export async function fetchLastMistakeRef(): Promise<Pick<Mistake, "source" | "ref"> | null> {
+  const rows = await db().query(`select source, ref from mistakes order by id desc limit 1`);
+  return (rows as unknown as Pick<Mistake, "source" | "ref">[])[0] ?? null;
 }

@@ -33,9 +33,11 @@ lib/queries.ts     SQL. date/timestamptz 는 to_char 로 문자열 고정해서 
 lib/kana.ts        읽기 확정 변환. 부분 변환 금지
 lib/parse.ts       붙여넣기 파서
 lib/settings.ts    설정 + 하루 경계 기준 오늘 날짜
+lib/mistakes.ts    오답노트 고정 값(출처 3종 · 분류 7종)과 입력 검증. 순수 함수
 lib/actions/       Server Action ("use server")
 app/api/grades/    채점 배치. keepalive fetch 를 쓰려고 Route Handler 로 뒀다
 app/study/         세션 화면. CardFace 는 테스트를 위해 분리되어 있다
+app/mistakes/new/  오답 입력 폼. 목록(/mistakes)은 아직 없다 — PLAN-mistakes.md 3단계
 app/manifest.ts    PWA 매니페스트. 아이콘은 scripts/make-icons.mjs 가 생성한다
 public/sw.js       서비스 워커. 정적 자산만 캐시한다
 proxy.ts           비밀번호 게이트 (Next 16 에서 middleware 는 proxy 로 이름이 바뀌었다)
@@ -55,13 +57,18 @@ proxy.ts           비밀번호 게이트 (Next 16 에서 middleware 는 proxy �
 
 - **스키마를 바꾸면 `npm run db:migrate -- --all`** 로 돌린다. E2E 는 별도 데이터베이스
   (`n2v_e2e`)를 쓰므로 한쪽만 갱신하면 브라우저 테스트가 통째로 깨진다.
+- **오답노트(`mistakes`)의 분류 7종은 늘리지 않는다.** 덱/태그가 아니라 고정 값이다.
+  분류 옆 한 줄 설명의 원본은 Obsidian 「오답 분류 기준」 표다. `lib/mistakes.ts` 에서 문구를
+  지어내지 말고, 값을 바꾸면 `db/schema.sql` 의 CHECK 와 함께 바꾼다(단위 테스트가 대조한다).
+- `mistakes` 통합 테스트 픽스처는 `ref` 가 `ＺＺ__itest__` 로 시작한다(규칙 7과 같은 이유).
+  손으로 적은 기록이라 정리 단계가 실제 행을 지우면 되살릴 수 없다.
 
 ## 검증
 
 ```bash
-npm test          # 62개 (SRS 전이표, 유형 분포, 큐, 읽기 변환, 파서, 카드 누출)
-npm run test:db   # 13개 (실제 Neon 왕복)
-npm run test:e2e  # 15개 (브라우저, 격리 DB)
+npm test          # 74개 (SRS 전이표, 유형 분포, 큐, 읽기 변환, 파서, 카드 누출, 오답 검증)
+npm run test:db   # 19개 (실제 Neon 왕복)
+npm run test:e2e  # 17개 (브라우저, 격리 DB)
 npm run typecheck
 npx eslint .
 npm run build

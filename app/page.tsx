@@ -153,6 +153,9 @@ export default async function HomePage() {
         <Link href="/add" className="underline underline-offset-4">
           + 단어 추가
         </Link>
+        <Link href="/mistakes/new" className="underline underline-offset-4">
+          + 오답 기록
+        </Link>
         <Link href="/words" className="underline underline-offset-4">
           단어 목록
         </Link>

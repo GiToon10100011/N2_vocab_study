@@ -21,7 +21,7 @@ export function sql() {
 
 /** 격리 DB 를 통째로 비운다. 실제 데이터가 아니므로 안전하다. */
 export async function resetDb() {
-  await sql().query(`truncate reviews, words restart identity cascade`);
+  await sql().query(`truncate reviews, words, mistakes restart identity cascade`);
 }
 
 /** 비밀번호 화면을 매번 통과하지 않도록 서명 쿠키를 직접 발급한다. */

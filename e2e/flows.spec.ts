@@ -14,7 +14,7 @@ test.afterAll(resetDb);
 test.describe("비밀번호 게이트", () => {
   test("쿠키 없이는 모든 화면이 막힌다", async ({ browser, baseURL }) => {
     const ctx = await browser.newContext();
-    for (const path of ["/", "/study", "/words", "/add", "/stats", "/settings"]) {
+    for (const path of ["/", "/study", "/words", "/add", "/mistakes/new", "/stats", "/settings"]) {
       const res = await ctx.request.get(`${baseURL}${path}`, { maxRedirects: 0 });
       expect(res.status(), path).toBe(307);
       expect(res.headers()["location"], path).toContain("/login");

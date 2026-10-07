@@ -81,3 +81,37 @@ create table if not exists settings (
 alter table settings add column if not exists last_backup_at timestamptz;
 
 insert into settings (id) values (1) on conflict (id) do nothing;
+
+-- 오답노트. 문법·교재 오답을 분류와 함께 적어 두고 재확인한다.
+-- 지금까지 Obsidian 노트에 손으로 적던 입력을 옮기는 것이 목적이고, 분류를 드롭다운으로
+-- 고르게 하는 것이 핵심이다. category 는 사용자가 늘리는 태그가 아니라 고정 7종이다.
+create table if not exists mistakes (
+  id          bigserial   primary key,
+  source      text        not null,   -- 'master1500'|'grammar'|'reading'
+  ref         text,                   -- 문항 번호. '12', 'Part A-3' 등 자유 형식
+  question    text,                   -- 선택지 또는 문제 요약
+  chosen      text,                   -- 고른 답
+  answer      text,                   -- 정답
+  why         text,                   -- 왜 틀렸다고 생각하는지
+  -- 분류 7종. DB 값이 UI 라벨과 같아야 「오답 분류 기준」 문서와 그대로 대조된다.
+  -- 영문 slug 로 바꾸지 않는다.
+  category    text        not null,
+  created_at  timestamptz not null default now(),
+  -- 학습일. words.study_day 와 같은 이유로 created_at 과 분리한다 — 어제 푼 문제를
+  -- 오늘 입력할 수 있어야 한다. 입력할 때 앱이 studyDate() 로 채우고 default 는 안전망이다.
+  study_day   date        not null default current_date,
+  resolved_at timestamptz,            -- 재확인에서 맞히면 채운다. null = 미해결
+
+  constraint mistakes_source_valid
+    check (source in ('master1500', 'grammar', 'reading')),
+  constraint mistakes_category_valid
+    check (category in ('개념 부족', '접속 실수', '활용 실수', '문법 구별 실패',
+                        '해석 실패', '회상 실패', '단순 실수'))
+);
+
+-- 날짜별 조회. words_study_day 와 같은 축이고, 단어 진도와 오답을 같은 날짜로 맞춰 본다
+create index if not exists mistakes_study_day on mistakes (study_day);
+-- 상단의 분류별 건수 7개와 분류 필터. 7종뿐이라 선택도는 낮지만 집계가 테이블 전체를 읽지 않는다
+create index if not exists mistakes_category  on mistakes (category);
+-- 목록 기본값이 "미해결만, 최근 입력 순". 해결된 행은 계속 쌓이므로 부분 인덱스로 뺀다
+create index if not exists mistakes_open      on mistakes (created_at desc) where resolved_at is null;

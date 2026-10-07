@@ -43,7 +43,8 @@ jobs:
           # 백업이 도는 것처럼 보이면서 실은 비어 있게 된다.
           node -e '
             const m = require("./backups/meta.json");
-            console.log(`words ${m.words} · reviews ${m.reviews}`);
+            console.log(`words ${m.words} · reviews ${m.reviews} · mistakes ${m.mistakes}`);
+            // mistakes 는 0건이 정상일 수 있다(아직 안 적은 날). words 만 검사한다.
             if (m.words === 0) { console.error("::error::단어가 0개입니다. 연결 대상을 확인하세요."); process.exit(1); }
           ' 
 
@@ -52,7 +53,9 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           # meta.json 은 매번 시각이 바뀌므로 데이터가 실제로 바뀐 경우에만 함께 커밋한다.
-          if git diff --quiet -- backups/words.csv backups/reviews.csv; then
+          # git diff 는 아직 추적되지 않는 파일을 보지 못한다. 처음 생기는 CSV 도 변경으로
+          # 잡히도록 status 로 본다.
+          if [ -z "$(git status --porcelain -- backups/words.csv backups/reviews.csv backups/mistakes.csv)" ]; then
             echo "변경 없음 - 건너뜀"
             git checkout -- backups/meta.json 2>/dev/null || true
             exit 0

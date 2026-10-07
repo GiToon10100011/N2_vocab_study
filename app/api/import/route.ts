@@ -33,7 +33,15 @@ export async function POST(req: Request) {
   let restored = 0;
   let failed = 0;
 
-  for (const raw of parsed.data.slice(0, 5000)) {
+  for (const parsedRow of parsed.data.slice(0, 5000)) {
+    // 백업 CSV 의 마지막 줄 마지막 칸에 개행이 섞여 들어온 이력이 있다(scripts/backup.mjs 에서
+    // 고쳤지만 이미 커밋된 과거 스냅샷에는 그대로 남아 있다). 그 상태로 복원하면
+    // study_day 가 정규식을 통과하지 못해 조용히 "오늘"로 바뀐다. 읽는 쪽에서도 다듬는다.
+    const raw: Row = {};
+    for (const [k, v] of Object.entries(parsedRow)) {
+      raw[k] = typeof v === "string" ? v.trim() : v;
+    }
+
     const surface = (raw.surface ?? "").trim();
     const meaning = (raw.meaning_ko ?? "").trim();
     const reading = normalizeReading(raw.reading ?? "") || surface;

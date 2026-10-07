@@ -10,6 +10,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { neon } from "@neondatabase/serverless";
 import Papa from "papaparse";
+import { BACKUP_TABLES } from "./backup-tables.mjs";
 
 const outDir = process.argv[2] || "backups";
 const url = process.env.DATABASE_URL;
@@ -49,21 +50,21 @@ async function dump(table, orderBy) {
 
 mkdirSync(outDir, { recursive: true });
 
-const words = await dump("words", `created_at asc, id asc`);
-const reviews = await dump("reviews", `id asc`);
-// 오답노트는 손으로 적은 기록이라 다시 만들 수 없다. 단어·채점 로그보다 복구가 어렵다.
-const mistakes = await dump("mistakes", `id asc`);
+// 대상 테이블은 backup-tables.mjs 의 목록뿐이다. 여기서 테이블 이름을 직접 적어 덤프하지 않는다.
+const counts = {};
+for (const { table, orderBy } of BACKUP_TABLES) {
+  counts[table] = await dump(table, orderBy);
+}
 
 writeFileSync(
   join(outDir, "meta.json"),
-  JSON.stringify(
-    { backed_up_at: new Date().toISOString(), words, reviews, mistakes },
-    null,
-    2,
-  ) + "\n",
+  JSON.stringify({ backed_up_at: new Date().toISOString(), ...counts }, null, 2) + "\n",
 );
 
 // 앱이 "마지막 백업" 을 보고 경고할 수 있도록 심장박동을 남긴다.
 await sql.query(`update settings set last_backup_at = now() where id = 1`);
 
-console.log(`words ${words}행 · reviews ${reviews}행 · mistakes ${mistakes}행 -> ${outDir}/`);
+const summary = Object.entries(counts)
+  .map(([table, n]) => `${table} ${n}행`)
+  .join(" · ");
+console.log(`${summary} -> ${outDir}/`);

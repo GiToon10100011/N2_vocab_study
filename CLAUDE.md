@@ -62,11 +62,15 @@ proxy.ts           비밀번호 게이트 (Next 16 에서 middleware 는 proxy �
   지어내지 말고, 값을 바꾸면 `db/schema.sql` 의 CHECK 와 함께 바꾼다(단위 테스트가 대조한다).
 - `mistakes` 통합 테스트 픽스처는 `ref` 가 `ＺＺ__itest__` 로 시작한다(규칙 7과 같은 이유).
   손으로 적은 기록이라 정리 단계가 실제 행을 지우면 되살릴 수 없다.
+- **오답 기록(`mistakes`)은 의도적으로 백업하지 않는다.** 빠뜨린 것이 아니다. 저장소가 공개이고
+  `backups/` 가 그대로 커밋되는데, 오답 기록에는 교재 문항 내용과 개인 메모가 들어가기 때문이다.
+  `scripts/backup-tables.mjs` 에 `mistakes` 를 넣지 말고 `.gitignore` 의 `backups/mistakes.csv` 도
+  지우지 말 것(`lib/backup.test.ts` 가 막는다). 오답 기록은 DB 에만 있고 자동 백업이 없다.
 
 ## 검증
 
 ```bash
-npm test          # 74개 (SRS 전이표, 유형 분포, 큐, 읽기 변환, 파서, 카드 누출, 오답 검증)
+npm test          # 76개 (SRS 전이표, 유형 분포, 큐, 읽기 변환, 파서, 카드 누출, 오답 검증, 백업 대상)
 npm run test:db   # 19개 (실제 Neon 왕복)
 npm run test:e2e  # 17개 (브라우저, 격리 DB)
 npm run typecheck

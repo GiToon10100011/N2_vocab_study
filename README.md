@@ -158,8 +158,9 @@ npm run backup        # 로컬에서 수동 덤프 (backups/ 갱신)
 홈 화면 하단의 CSV/JSON 버튼은 그대로 남아 있다. 지금 당장 파일이 필요할 때 쓴다.
 CSV 는 앞 3열(`surface,reading,meaning_ko`)만 떼면 Anki/Quizlet 으로도 그대로 들어간다.
 
-> 이 저장소는 공개다. `backups/` 의 단어 목록과 학습 기록, 오답노트(`mistakes.csv` — 문제 요약과
-> 직접 적은 메모)도 함께 공개된다.
+> 이 저장소는 공개다. `backups/` 의 단어 목록과 학습 기록도 함께 공개된다.
+> 오답 기록(`mistakes`)은 **의도적으로** 백업하지 않는다. 교재 문항 내용과 개인 메모가 들어가기
+> 때문이다. 그래서 오답 기록은 DB 에만 있다 — `backups/README.md` 참고.
 > 비공개로 바꾸려면 `gh repo edit --visibility private` 하면 된다(설정 변경은 불필요).
 
 ## 테스트 격리

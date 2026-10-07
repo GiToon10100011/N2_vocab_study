@@ -46,3 +46,7 @@ next-env.d.ts
 # playwright
 test-results/
 playwright-report/
+
+# 오답 기록은 의도적으로 백업하지 않는다. 저장소가 공개이고 교재 문항 내용과 개인 메모가
+# 들어가기 때문이다. 옛 스크립트가 파일을 만들어도 커밋되지 않게 막아 둔다.
+backups/mistakes.csv

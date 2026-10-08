@@ -243,12 +243,25 @@ describe("실제 DB 왕복", () => {
 
   it("설정을 저장하고 읽는다", async () => {
     const before = await fetchSettings();
-    await saveSettings({ ...before, newLimit: 42, weights: { s2r: 70, s2m: 20, r2m: 10 } });
-    const after = await fetchSettings();
-    expect(after.newLimit).toBe(42);
-    expect(after.weights).toEqual({ s2r: 70, s2m: 20, r2m: 10 });
-    await saveSettings(before); // 원복
-    expect((await fetchSettings()).newLimit).toBe(before.newLimit);
+    try {
+      await saveSettings({
+        ...before,
+        newLimit: 42,
+        weights: { s2r: 70, s2m: 20, r2m: 10 },
+        undoSeconds: 0, // 상시
+      });
+      const after = await fetchSettings();
+      expect(after.newLimit).toBe(42);
+      expect(after.weights).toEqual({ s2r: 70, s2m: 20, r2m: 10 });
+      expect(after.undoSeconds).toBe(0);
+
+      await saveSettings({ ...before, undoSeconds: 120 });
+      expect((await fetchSettings()).undoSeconds).toBe(120);
+    } finally {
+      // 실제 설정이다. 중간에 실패해도 반드시 되돌린다.
+      await saveSettings(before);
+    }
+    expect(await fetchSettings()).toEqual(before);
   });
 
   it("오늘 카운트와 기간 통계가 나온다", async () => {

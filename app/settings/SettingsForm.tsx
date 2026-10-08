@@ -3,6 +3,11 @@
 import Link from "next/link";
 import { useRef, useState } from "react";
 import { saveSettingsAction } from "@/lib/actions/settings";
+import {
+  DEFAULT_UNDO_SECONDS,
+  MAX_UNDO_SECONDS,
+  normalizeUndoSeconds,
+} from "@/lib/grade-outbox";
 import { PROMPT_LABEL } from "@/lib/types";
 import type { AppSettings } from "@/lib/types";
 
@@ -10,6 +15,10 @@ export function SettingsForm({ initial }: { initial: AppSettings }) {
   const [s, setS] = useState<AppSettings>(initial);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  /** 되돌리기 시간 칸에 친 그대로. 상시를 껐을 때 돌아갈 값도 여기서 찾는다. */
+  const [undoText, setUndoText] = useState(
+    String(initial.undoSeconds || DEFAULT_UNDO_SECONDS),
+  );
 
   const [importing, setImporting] = useState(false);
   const [importMsg, setImportMsg] = useState<string | null>(null);
@@ -23,6 +32,7 @@ export function SettingsForm({ initial }: { initial: AppSettings }) {
     setMsg(null);
     const next = await saveSettingsAction(s);
     setS(next);
+    if (next.undoSeconds > 0) setUndoText(String(next.undoSeconds));
     setBusy(false);
     setMsg("저장했습니다.");
   }
@@ -64,6 +74,52 @@ export function SettingsForm({ initial }: { initial: AppSettings }) {
       </header>
 
       <section className="mt-6 flex flex-col gap-4 rounded-xl border border-border bg-surface p-5">
+        <h2 className="text-sm font-semibold">되돌리기</h2>
+
+        <div className="flex flex-col gap-2">
+          <label className="flex items-center justify-between gap-4">
+            <span className="text-sm">
+              되돌리기 시간(초)
+              <span className="ml-2 text-xs text-muted">
+                채점한 뒤 손을 멈추고 이 시간이 지나면 확정됩니다. 그 전에는 몇 장이든 되돌릴 수
+                있습니다
+              </span>
+            </span>
+            <input
+              type="number"
+              min={1}
+              max={MAX_UNDO_SECONDS}
+              disabled={s.undoSeconds === 0}
+              value={s.undoSeconds === 0 ? "" : undoText}
+              placeholder="상시"
+              onChange={(e) => {
+                setUndoText(e.target.value);
+                // 지우는 도중의 빈 칸을 0 으로 읽으면 입력하다가 상시로 넘어가 버린다.
+                const n = Number(e.target.value);
+                if (e.target.value !== "" && n >= 1) {
+                  setS({ ...s, undoSeconds: normalizeUndoSeconds(n) });
+                }
+              }}
+              onBlur={() => setUndoText(String(s.undoSeconds))}
+              className="w-28 rounded-lg border border-border bg-bg px-3 py-2 text-right tabular-nums disabled:opacity-40"
+            />
+          </label>
+          <label className="flex items-center gap-2 text-sm text-muted">
+            <input
+              type="checkbox"
+              checked={s.undoSeconds === 0}
+              onChange={(e) => {
+                const back = normalizeUndoSeconds(Number(undoText)) || DEFAULT_UNDO_SECONDS;
+                setS({ ...s, undoSeconds: e.target.checked ? 0 : back });
+                if (!e.target.checked) setUndoText(String(back));
+              }}
+            />
+            상시 (세션이 끝날 때까지 되돌리기 · 채점은 세션을 끝내거나 나갈 때 전송)
+          </label>
+        </div>
+      </section>
+
+      <section className="mt-4 flex flex-col gap-4 rounded-xl border border-border bg-surface p-5">
         <h2 className="text-sm font-semibold">하루 분량</h2>
 
         <div className="flex flex-col gap-2">

@@ -88,7 +88,7 @@ test.describe("규모 · 성능", () => {
     const perCard = (Date.now() - t0) / N;
     console.log(`[세션] 카드당 조작 처리 ${perCard.toFixed(1)}ms · 채점 요청 ${urls.length}건`);
 
-    // 20장 처리에 채점 배치(5장 단위)만 나가야 한다. 카드마다 조회가 나가면 실패.
+    // 20장을 넘기는 동안 나가도 되는 것은 채점 전송뿐이다. 카드마다 조회가 나가면 실패.
     expect(urls.filter((u) => !u.includes("/api/grades")).length).toBe(0);
     expect(perCard, "카드 전환이 100ms 를 넘으면 안 된다").toBeLessThan(100);
   });

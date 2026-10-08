@@ -34,8 +34,11 @@ lib/kana.ts        읽기 확정 변환. 부분 변환 금지
 lib/parse.ts       붙여넣기 파서
 lib/settings.ts    설정 + 하루 경계 기준 오늘 날짜
 lib/mistakes.ts    오답노트 고정 값(출처 3종 · 분류 7종)과 입력 검증. 순수 함수
+lib/grade-outbox.ts  되돌리기 창과 미전송 채점 보관. 저장소·전송을 받아 쓰므로 그대로 테스트한다
+lib/grade-client.ts  위 규칙에 localStorage 와 fetch 를 붙이는 브라우저 쪽 연결부. 전송을 한 줄로 세우고,
+                     학습 화면이 큐를 새로 받아야 하는지 정한다
 lib/actions/       Server Action ("use server")
-app/api/grades/    채점 배치. keepalive fetch 를 쓰려고 Route Handler 로 뒀다
+app/api/grades/    채점 배치. 클라이언트가 fetch 로 보내고 응답의 ok 를 확인한다(Route Handler)
 app/study/         세션 화면. CardFace 는 테스트를 위해 분리되어 있다
 app/mistakes/new/  오답 입력 폼. 목록(/mistakes)은 아직 없다 — PLAN-mistakes.md 3단계
 app/manifest.ts    PWA 매니페스트. 아이콘은 scripts/make-icons.mjs 가 생성한다
@@ -50,7 +53,18 @@ proxy.ts           비밀번호 게이트 (Next 16 에서 middleware 는 proxy �
   나오지 않으면 사용자는 "누락됐다"고 느낀다. 기획서의 "하루 30개"는 사용 예측이지 제약이 아니었다.
 - **SRS 계산은 서버에서만 한다.** 클라이언트는 `{wordId, kind, correct, retry}` 만 보낸다.
   전이 규칙을 클라이언트에 복제하지 말 것.
-- **세션 중 네트워크 왕복을 늘리지 말 것.** 큐는 시작할 때 한 번만 받고, 채점은 5장씩 모아 보낸다.
+- **세션 중 네트워크 왕복을 늘리지 말 것.** 큐는 시작할 때 한 번만 받고, 채점은 되돌리기 창이
+  닫힐 때 모아 보낸다.
+- **되돌릴 수 있는 채점은 서버로 보내지 않는다.** 창은 마지막 채점·되돌리기 뒤 `undo_seconds` 초 동안
+  손을 멈추면 닫힌다(0 = 상시, 세션이 끝나거나 나갈 때). **카드 수로 끊지 말 것** — 예전의
+  「5장 모이면 전송」이 빠르게 넘길 때 되돌리기를 끊었다. 서버에서 채점을 취소하는 API 는 만들지 않는다.
+- **채점은 서버가 `ok` 라고 답한 뒤에만 저장소에서 지운다.** 그 전에는 localStorage 에 있고 다음 진입 때
+  먼저 보낸다. **탭을 닫는 순간에 보내지 말 것**(`sendBeacon`·`keepalive`). 도착을 확인할 수 없는
+  전송은 보냈다고 치면 잃고, 남겨 두면 두 번 반영된다. 같은 이유로 전송은 한 번에 하나만 돈다.
+- 학습 화면은 미전송 채점이 남아 있으면 그것부터 보내고 **큐를 새로 받는다**. 받은 큐는 그 채점이
+  반영되기 전에 만들어진 것이라, 그대로 시작하면 이미 푼 카드를 다시 풀고 두 번 반영된다.
+- `fetchSettings` 는 `undo_seconds` 를 `to_jsonb` 로 읽는다. 모든 화면이 거치는 조회라, 컬럼이 없는 DB 에
+  코드가 먼저 올라가도 앱 전체가 죽지 않게 하려는 것이다. 컬럼 이름으로 바꾸지 말 것.
 - 날짜는 전부 `'YYYY-MM-DD'` 문자열로 다룬다. `Date` 객체를 스키마나 API 경계에 넣지 않는다.
 - 하루 경계는 04:00(`APP_TIMEZONE`). `studyDate()` 를 쓰고 `new Date()` 로 날짜를 만들지 않는다.
 - `lib/srs.ts` 를 고쳤으면 `npm test` 가 반드시 통과해야 한다.
@@ -70,9 +84,9 @@ proxy.ts           비밀번호 게이트 (Next 16 에서 middleware 는 proxy �
 ## 검증
 
 ```bash
-npm test          # 76개 (SRS 전이표, 유형 분포, 큐, 읽기 변환, 파서, 카드 누출, 오답 검증, 백업 대상)
+npm test          # 99개 (SRS 전이표, 유형 분포, 큐, 읽기 변환, 파서, 카드 누출, 오답 검증, 백업 대상, 되돌리기 창, 채점 복구)
 npm run test:db   # 19개 (실제 Neon 왕복)
-npm run test:e2e  # 17개 (브라우저, 격리 DB)
+npm run test:e2e  # 22개 (브라우저, 격리 DB)
 npm run typecheck
 npx eslint .
 npm run build

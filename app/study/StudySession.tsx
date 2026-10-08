@@ -6,51 +6,16 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { RETRY_GAP } from "@/lib/srs";
 import { suspendWordAction, updateWordAction } from "@/lib/actions/words";
 import { hasNonKana, normalizeReading } from "@/lib/kana";
+import { OUTBOX_KEY, type UndoBuffer } from "@/lib/grade-outbox";
+import {
+  createUndoBuffer,
+  recoverBeforeSession,
+  recoveryPending,
+  releaseUndoBuffer,
+  unsentCount,
+} from "@/lib/grade-client";
 import { CardFace, type SessionCard } from "./CardFace";
 import type { GradeInput, PromptType, QueueCard, QueueWord } from "@/lib/types";
-
-const FLUSH_AT = 5;
-/**
- * 마지막 채점 후 이 시간이 지나면 남은 것을 보낸다.
- * 언로드(pagehide/sendBeacon) 전송은 헤드리스 환경에서 큐잉 성공을 반환하고도
- * 서버에 도달하지 않는 것을 E2E 로 확인했다. 언로드에 기대지 않고,
- * 채점이 서버에 머무르지 않는 시간을 이 값으로 묶어둔다.
- */
-const IDLE_FLUSH_MS = 5000;
-const FAILED_KEY = "n2v_pending_grades";
-
-/* ---------- 전송 실패분 보관 (네트워크가 끊겨도 채점을 잃지 않는다) ---------- */
-
-/** 세션 종류(연습 여부)가 배치마다 다를 수 있으므로 배치 단위로 보관한다. */
-interface PendingBatch {
-  practice: boolean;
-  grades: GradeInput[];
-}
-
-function loadFailed(): PendingBatch[] {
-  try {
-    const raw = localStorage.getItem(FAILED_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? (parsed as PendingBatch[]).filter((b) => b?.grades?.length) : [];
-  } catch {
-    return [];
-  }
-}
-function saveFailed(batches: PendingBatch[]) {
-  try {
-    localStorage.setItem(FAILED_KEY, JSON.stringify(batches.slice(-20)));
-  } catch {
-    /* 저장 실패는 무시 */
-  }
-}
-function clearFailed() {
-  try {
-    localStorage.removeItem(FAILED_KEY);
-  } catch {
-    /* noop */
-  }
-}
 
 interface Handlers {
   reveal(): void;
@@ -60,37 +25,27 @@ interface Handlers {
   edit(): void;
 }
 
-/** 언로드 중 동기 전송. 성공적으로 큐에 넣었으면 true. */
-function beacon(batch: PendingBatch): boolean {
-  try {
-    const body = new Blob(
-      [JSON.stringify({ grades: batch.grades, practice: batch.practice })],
-      { type: "application/json" },
-    );
-    return navigator.sendBeacon("/api/grades", body);
-  } catch {
-    return false;
-  }
-}
-
+/** 되돌리면 돌아갈 화면 상태. 채점 하나에 하나씩 쌓인다. */
 interface Snapshot {
   queue: SessionCard[];
   index: number;
   answered: number;
   correct: number;
   missed: QueueWord[];
-  pendingLen: number;
 }
 
 export function StudySession({
   initialCards,
   practice = false,
   title,
+  undoSeconds,
 }: {
   initialCards: QueueCard[];
-  /** 일차/주차 퀴즈. 채점 결과를 서버로 보내지 않는다(SRS 미반영). */
+  /** 일차/주차 퀴즈. 복습 주기는 건드리지 않고 오답 기록만 남긴다. */
   practice?: boolean;
   title?: string;
+  /** 되돌리기 시간(초). 0 = 상시 */
+  undoSeconds: number;
 }) {
   const [queue, setQueue] = useState<SessionCard[]>(initialCards);
   const [index, setIndex] = useState(0);
@@ -104,120 +59,91 @@ export function StudySession({
   const [editing, setEditing] = useState(false);
   const router = useRouter();
 
-  const pendingRef = useRef<GradeInput[]>([]);
   const snapsRef = useRef<Snapshot[]>([]);
   const retryCountRef = useRef(0);
-  const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** 아직 보내지 않은 채점. 되돌리기 창과 저장소 백업은 여기서 맡는다(lib/grade-outbox.ts). */
+  const bufferRef = useRef<UndoBuffer | null>(null);
 
   /**
-   * 순수 전송. 상태를 건드리지 않으므로 effect 안에서도 안전하다.
-   *
-   * unload = true 는 탭을 닫거나 다른 화면으로 넘어가는 순간이다.
-   * fetch(keepalive) 는 이때 실제로 전달되지 않는 것을 E2E 로 확인했다.
-   * 언로드 중 전송의 정식 API 인 sendBeacon 을 쓰고, 큐에 넣지 못한 배치만
-   * localStorage 에 남겨 다음 세션에서 다시 올린다(둘 다 동기라 언로드를 견딘다).
+   * 지난 세션에서 서버에 가지 못한 채점이 남아 있으면 그것부터 보낸다. 방금 받은 큐는 그 채점이
+   * 반영되기 전에 만들어진 것이라, 그대로 시작하면 이미 푼 카드가 다시 나오고 두 번 반영된다.
    */
-  const sendBatches = useCallback(async (batches: PendingBatch[], unload = false) => {
-    const pending = batches.filter((b) => b.grades.length > 0);
-    if (pending.length === 0) return;
-    clearFailed();
+  const [recovery, setRecovery] = useState<"none" | "sending" | "failed">("none");
+  const [unsent, setUnsent] = useState(0);
+  const blockedRef = useRef(false);
 
-    if (unload) {
-      const failed = pending.filter((b) => !beacon(b));
-      if (failed.length > 0) saveFailed(failed);
-      return;
+  const recover = useCallback(async () => {
+    blockedRef.current = true;
+    setRecovery("sending");
+    const r = await recoverBeforeSession().catch(() => null);
+    if (!r || r.failed > 0) {
+      setUnsent(r?.failed ?? unsentCount());
+      setRecovery("failed");
+    } else if (r.reload) {
+      window.location.reload(); // 채점이 반영된 큐를 새로 받는다
+    } else {
+      blockedRef.current = false;
+      setRecovery("none");
     }
-
-    const failed: PendingBatch[] = [];
-    for (const batch of pending) {
-      try {
-        const res = await fetch("/api/grades", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ grades: batch.grades, practice: batch.practice }),
-        });
-        if (!res.ok) throw new Error(String(res.status));
-      } catch {
-        failed.push(batch);
-      }
-    }
-    if (failed.length > 0) saveFailed(failed);
   }, []);
 
-  /** 모아둔 채점을 비우고 보낸다. 되돌리기는 여기서 끝난다. */
-  const flushPending = useCallback(
-    (unload = false) => {
-      if (idleTimer.current) {
-        clearTimeout(idleTimer.current);
-        idleTimer.current = null;
-      }
-      const mine = pendingRef.current;
-      pendingRef.current = [];
-      snapsRef.current = [];
-      void sendBatches([...loadFailed(), { practice, grades: mine }], unload);
-    },
-    [sendBatches, practice],
-  );
-
-  // 지난 세션에서 못 보낸 채점이 있으면 먼저 올린다.
   useEffect(() => {
-    const failed = loadFailed();
-    if (failed.length > 0) void sendBatches(failed);
-  }, [sendBatches]);
+    if (!recoveryPending()) return;
+    // 안내 화면으로 바뀌기 전에 들어오는 입력부터 막는다.
+    blockedRef.current = true;
+    void Promise.resolve().then(recover);
+  }, [recover]);
 
-  // 탭을 닫거나 백그라운드로 보낼 때도 채점을 잃지 않게 한다.
   useEffect(() => {
-    const onHide = () => flushPending(true);
-    const onVisibility = () => {
-      if (document.visibilityState === "hidden") onHide();
+    const buffer = createUndoBuffer({
+      undoSeconds,
+      practice,
+      onClose: () => {
+        snapsRef.current = [];
+        setCanUndo(false);
+      },
+    });
+    bufferRef.current = buffer;
+
+    // 다른 탭이 이 세션의 채점을 가져가 보냈거나, 화면을 떠나 있는 사이 되돌리기 시간이 지났을 수 있다.
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === null || e.key === OUTBOX_KEY) buffer.sync();
     };
-    window.addEventListener("pagehide", onHide);
-    document.addEventListener("visibilitychange", onVisibility);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") buffer.sync();
+    };
+    window.addEventListener("storage", onStorage);
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
-      window.removeEventListener("pagehide", onHide);
-      document.removeEventListener("visibilitychange", onVisibility);
-      flushPending(true);
+      window.removeEventListener("storage", onStorage);
+      document.removeEventListener("visibilitychange", onVisible);
+      // 앱 안에서 다른 화면으로 넘어가는 경우다. 페이지는 살아 있으니 보통의 요청으로 보낸다.
+      // 탭을 닫을 때는 아무것도 보내지 않는다. 그 순간의 전송은 도착했는지 알 수 없어서,
+      // 보냈다고 치면 잃고 남겨 두면 두 번 반영된다. 저장소에 남은 것을 다음 진입 때 보낸다.
+      void releaseUndoBuffer(buffer).catch(() => undefined);
+      bufferRef.current = null;
     };
-  }, [flushPending, practice]);
+  }, [undoSeconds, practice]);
 
   const card: SessionCard | undefined = queue[index];
 
   function snapshot() {
-    snapsRef.current.push({
-      queue,
-      index,
-      answered,
-      correct,
-      missed,
-      pendingLen: pendingRef.current.length,
-    });
-    if (snapsRef.current.length > 10) snapsRef.current.shift();
+    snapsRef.current.push({ queue, index, answered, correct, missed });
   }
 
   function record(g: GradeInput) {
     // 연습 퀴즈도 기록은 한다. 복습 주기는 안 바뀌지만 오답은 오답노트에 남아야 한다.
-    pendingRef.current.push(g);
-    if (idleTimer.current) clearTimeout(idleTimer.current);
-
-    if (pendingRef.current.length >= FLUSH_AT) {
-      flushPending();
-      setCanUndo(false);
-      return;
-    }
+    bufferRef.current?.add(g);
     setCanUndo(true);
-    // 손을 멈추면 곧 보낸다. 되돌리기도 여기까지만 가능하다.
-    idleTimer.current = setTimeout(() => {
-      flushPending();
-      setCanUndo(false);
-    }, IDLE_FLUSH_MS);
   }
 
   function advance(nextQueue: SessionCard[], nextIndex: number) {
     setQueue(nextQueue);
     if (nextIndex >= nextQueue.length) {
       setFinished(true);
-      flushPending();
-      setCanUndo(false);
+      // 세션이 끝났다. 되돌리기 시간이 남아 있어도 여기서 확정하고 보낸다. 끝내고 바로 앱을
+      // 닫는 것이 가장 흔한 경로라, 미루면 채점이 이 기기에만 남는다.
+      void bufferRef.current?.close().catch(() => undefined);
       return;
     }
     setIndex(nextIndex);
@@ -225,14 +151,14 @@ export function StudySession({
   }
 
   function onLearnNext() {
-    if (!card) return;
+    if (!card || blockedRef.current) return;
     snapshot();
     record({ wordId: card.word.id, kind: "learn", correct: true, retry: false });
     advance(queue, index + 1);
   }
 
   function onGrade(isCorrect: boolean) {
-    if (!card || card.kind === "learn" || !revealed) return;
+    if (!card || card.kind === "learn" || !revealed || blockedRef.current) return;
     snapshot();
     record({
       wordId: card.word.id,
@@ -265,9 +191,15 @@ export function StudySession({
   }
 
   function onUndo() {
-    const snap = snapsRef.current.pop();
+    const snap = snapsRef.current[snapsRef.current.length - 1];
     if (!snap) return;
-    pendingRef.current = pendingRef.current.slice(0, snap.pendingLen);
+    // 창이 이미 닫혔으면(그 사이 시간이 지났거나 다른 탭이 보냈다) 되돌리지 않는다.
+    if (!bufferRef.current?.undo()) {
+      snapsRef.current = [];
+      setCanUndo(false);
+      return;
+    }
+    snapsRef.current.pop();
     setQueue(snap.queue);
     setIndex(snap.index);
     setAnswered(snap.answered);
@@ -278,15 +210,19 @@ export function StudySession({
     setCanUndo(snapsRef.current.length > 0);
   }
 
-  /** 앱 안에서 세션을 떠나는 경로. 언로드에 기대지 않고 확실히 보내고 이동한다. */
+  /** 앱 안에서 세션을 떠나는 경로. 확실히 보내고 이동한다. */
   async function leave() {
-    if (idleTimer.current) clearTimeout(idleTimer.current);
-    const mine = pendingRef.current;
-    pendingRef.current = [];
-    snapsRef.current = [];
-    setCanUndo(false);
-    await sendBatches([...loadFailed(), { practice, grades: mine }]);
+    await bufferRef.current?.close().catch(() => undefined);
     router.push("/");
+  }
+
+  /**
+   * 연습을 다시 푼다. 방금 끝낸 채점이 서버에 닿은 것을 확인한 뒤에 새로 받는다. 보내는 도중에
+   * 새로고침하면 서버는 받았는데 저장소에는 남아, 다시 열렸을 때 한 번 더 보낸다.
+   */
+  async function again() {
+    await bufferRef.current?.close().catch(() => undefined);
+    window.location.reload();
   }
 
   async function onSuspend() {
@@ -296,6 +232,8 @@ export function StudySession({
       await suspendWordAction(card.word.id);
       const wordId = card.word.id;
       const nextQueue = queue.filter((c, i) => i <= index || c.word.id !== wordId);
+      // 큐에서 카드를 빼므로 그 앞으로는 되돌릴 수 없다. 여기까지의 채점을 확정한다.
+      void bufferRef.current?.close().catch(() => undefined);
       snapsRef.current = [];
       setCanUndo(false);
       advance(nextQueue, index + 1);
@@ -329,7 +267,7 @@ export function StudySession({
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.metaKey || e.ctrlKey || e.altKey || blockedRef.current) return;
       const el = document.activeElement;
       if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) return;
       switch (e.key) {
@@ -366,9 +304,28 @@ export function StudySession({
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  if (recovery !== "none") {
+    return (
+      <RecoveryNotice
+        failed={recovery === "failed" ? unsent : null}
+        onRetry={() => void recover()}
+        onSkip={() => {
+          blockedRef.current = false;
+          setRecovery("none");
+        }}
+      />
+    );
+  }
+
   if (finished || !card) {
     return (
-      <Done answered={answered} correct={correct} missed={missed} practice={practice} />
+      <Done
+        answered={answered}
+        correct={correct}
+        missed={missed}
+        practice={practice}
+        onAgain={() => void again()}
+      />
     );
   }
 
@@ -491,6 +448,55 @@ export function StudySession({
   );
 }
 
+/** 지난 세션의 채점을 서버에 반영하는 동안, 그리고 반영하지 못했을 때 카드 대신 보여준다. */
+function RecoveryNotice({
+  failed,
+  onRetry,
+  onSkip,
+}: {
+  /** 반영하지 못한 채점 수. null 이면 아직 보내는 중이다. */
+  failed: number | null;
+  onRetry: () => void;
+  onSkip: () => void;
+}) {
+  return (
+    <main className="mx-auto flex min-h-dvh max-w-2xl flex-col items-center justify-center px-6 text-center">
+      {failed === null ? (
+        <p role="status" className="text-sm text-muted">
+          지난 세션의 채점을 반영하는 중입니다…
+        </p>
+      ) : (
+        <>
+          <p className="text-lg font-semibold">
+            지난 세션의 채점 {failed}건을 아직 반영하지 못했습니다
+          </p>
+          <p className="mt-3 text-sm text-muted">
+            채점은 이 기기에 남아 있습니다. 반영하기 전에 시작하면 이미 푼 카드가 다시 나올 수
+            있습니다.
+          </p>
+          <div className="mt-8 flex gap-3">
+            <button
+              onClick={onRetry}
+              className="rounded-xl bg-accent px-6 py-3.5 font-semibold text-accent-fg"
+            >
+              다시 시도
+            </button>
+            <button
+              onClick={onSkip}
+              className="rounded-xl border border-border bg-surface px-6 py-3.5 font-semibold"
+            >
+              그대로 시작
+            </button>
+          </div>
+          <Link href="/" className="mt-6 text-sm text-muted underline underline-offset-4">
+            홈으로
+          </Link>
+        </>
+      )}
+    </main>
+  );
+}
+
 /** 세션 중 오타 수정. 흐름을 끊지 않도록 오버레이로 띄운다. */
 function EditOverlay({
   card,
@@ -591,11 +597,13 @@ function Done({
   correct,
   missed,
   practice,
+  onAgain,
 }: {
   answered: number;
   correct: number;
   missed: QueueWord[];
   practice: boolean;
+  onAgain: () => void;
 }) {
   const rate = answered > 0 ? Math.round((correct / answered) * 100) : null;
   return (
@@ -635,7 +643,7 @@ function Done({
       <div className="mt-10 flex gap-3">
         {practice && (
           <button
-            onClick={() => window.location.reload()}
+            onClick={onAgain}
             className="flex-1 rounded-xl border border-border bg-surface px-6 py-4 text-base font-semibold"
           >
             다시 (순서 섞기)

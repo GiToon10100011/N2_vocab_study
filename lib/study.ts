@@ -11,6 +11,8 @@ import type { QueueCard } from "./types";
 export interface TodayQueue {
   today: string;
   cards: QueueCard[];
+  /** 되돌리기 시간(초). 큐를 만들 때 이미 읽은 설정에서 함께 넘긴다. */
+  undoSeconds: number;
 }
 
 /** 세션 시작 시 딱 한 번 호출된다. 이후 카드 전환에는 네트워크 왕복이 없다. */
@@ -23,6 +25,7 @@ export async function loadTodayQueue(skipNew: boolean): Promise<TodayQueue> {
   ]);
   return {
     today,
+    undoSeconds: settings.undoSeconds,
     cards: buildQueue({
       words,
       today,
@@ -44,6 +47,7 @@ export async function loadPracticeQueue(from: string, to: string): Promise<Today
   ]);
   return {
     today,
+    undoSeconds: settings.undoSeconds,
     cards: buildPracticeQueue({ words, readingCounts, weights: settings.weights }),
   };
 }
@@ -57,6 +61,7 @@ export async function loadFlagPracticeQueue(flag: "wrong" | "weak"): Promise<Tod
   ]);
   return {
     today,
+    undoSeconds: settings.undoSeconds,
     cards: buildPracticeQueue({ words: res.rows, readingCounts, weights: settings.weights }),
   };
 }

@@ -30,7 +30,7 @@ function parseGrades(raw: unknown): GradeInput[] {
 }
 
 /**
- * 채점 배치. 세션 중에는 낙관적으로 화면을 넘기고 여기로 5장씩 모아 보낸다.
+ * 채점 배치. 세션 중에는 낙관적으로 화면을 넘기고, 되돌리기 시간이 지난 채점을 모아 여기로 보낸다.
  * SRS 계산은 서버에서만 한다(lib/srs.ts 단일 출처).
  */
 export async function POST(req: Request) {

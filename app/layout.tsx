@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { RegisterSW } from "./RegisterSW";
+import { GradeRecovery } from "./GradeRecovery";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -48,6 +49,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <body className="min-h-full">
         {children}
         <RegisterSW />
+        <GradeRecovery />
       </body>
     </html>
   );

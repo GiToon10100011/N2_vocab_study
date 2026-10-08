@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { db } from "./db";
 import { addMistakeAction } from "./actions/mistakes";
+import { joinChoices, splitChoices } from "./mistakes";
 import { fetchLastMistakeRef } from "./queries";
 import { addDays, studyDate } from "./srs";
 
@@ -85,6 +86,23 @@ describe("오답노트 DB 왕복", () => {
       why: null,
       study_day: yesterday,
     });
+  });
+
+  it("선택지 여러 개는 한 줄에 하나씩 들어가고 그대로 돌아온다", async () => {
+    const res = await addMistakeAction({
+      source: "master1500",
+      category: "문법 구별 실패",
+      ref: `${P}choices`,
+      question: joinChoices(["ＺＺあ", " ＺＺい ", "", "ＺＺう"]),
+      studyDay: TODAY,
+    });
+    if (!res.ok) throw new Error(`저장 실패: ${res.reason}`);
+
+    const rows = (await db().query(`select question from mistakes where id = $1::bigint`, [
+      res.mistake.id,
+    ])) as { question: string }[];
+    expect(rows[0].question).toBe("ＺＺあ\nＺＺい\nＺＺう");
+    expect(splitChoices(res.mistake.question)).toEqual(["ＺＺあ", "ＺＺい", "ＺＺう"]);
   });
 
   it("학습일이 없거나 형식이 틀리면 오늘로 넣는다", async () => {

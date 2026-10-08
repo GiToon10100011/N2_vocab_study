@@ -83,6 +83,27 @@ function text(v: unknown): string | null {
   return typeof v === "string" ? v.trim() || null : null;
 }
 
+/**
+ * 선택지는 question 칸에 한 줄에 하나씩 적는다. 개수가 문항마다 달라서(양자택일 2개, 사지선다 4개,
+ * 괄호 채우기는 0개) 칸을 따로 두지 않는다.
+ *
+ * 이 형식이 생기기 전의 행은 선택지를 한 줄에 다 적었다. 그런 행은 항목 하나로 읽힌다.
+ * 손으로 적은 기록이므로 나눠서 고쳐 쓰지 않는다.
+ */
+export function joinChoices(choices: readonly unknown[]): string {
+  return choices
+    .map((c) => (typeof c === "string" ? c.trim() : ""))
+    .filter(Boolean)
+    .join("\n");
+}
+
+export function splitChoices(question: string | null | undefined): string[] {
+  return (question ?? "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
 export function validateMistake(input: MistakeInput): MistakeValidation {
   if (!isSource(input?.source)) return { ok: false, reason: "source" };
   if (!isCategory(input.category)) return { ok: false, reason: "category" };
@@ -91,7 +112,8 @@ export function validateMistake(input: MistakeInput): MistakeValidation {
     source: input.source,
     category: input.category,
     ref: text(input.ref),
-    question: text(input.question),
+    // 빈 줄과 줄마다의 앞뒤 공백을 걷어낸다. 폼을 거치지 않은 입력도 같은 형식으로 저장된다.
+    question: joinChoices(splitChoices(text(input.question))) || null,
     chosen: text(input.chosen),
     answer: text(input.answer),
     why: text(input.why),

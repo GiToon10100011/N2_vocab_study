@@ -9,6 +9,8 @@ import {
   MISTAKE_SOURCES,
   MISTAKE_SOURCE_LABEL,
   MISTAKE_TEXT_MAX,
+  joinChoices,
+  splitChoices,
   validateMistake,
   type Mistake,
   type MistakeInvalid,
@@ -16,17 +18,25 @@ import {
 } from "@/lib/mistakes";
 import { addDays } from "@/lib/srs";
 
-/** 칸 순서는 Obsidian 「오답 보고 형식」과 같다. Enter 체인도 이 순서로 흐른다. */
+/**
+ * 칸 순서는 Obsidian 「오답 보고 형식」과 같다. Enter 체인도 이 순서로 흐른다.
+ * 선택지는 개수가 문항마다 달라 목록으로 따로 받고, 문항 번호와 고른 답 사이에 낀다.
+ */
 const FIELDS = [
   { key: "ref", label: "문항 번호", hint: "12, Part A-3 처럼 자유롭게", lang: undefined },
-  { key: "question", label: "선택지", hint: "또는 문제 요약", lang: "ja" },
   { key: "chosen", label: "고른 답", hint: "", lang: "ja" },
   { key: "answer", label: "정답", hint: "", lang: "ja" },
   { key: "why", label: "왜 틀렸다고 생각하는지", hint: "한 줄", lang: "ko" },
 ] as const;
 type FieldKey = (typeof FIELDS)[number]["key"];
 
-const EMPTY: Record<FieldKey, string> = { ref: "", question: "", chosen: "", answer: "", why: "" };
+const EMPTY: Record<FieldKey, string> = { ref: "", chosen: "", answer: "", why: "" };
+
+/** 선택지 한 줄. id 는 가운데 줄을 지워도 다른 줄의 입력이 섞이지 않게 하는 열쇠다. */
+interface ChoiceRow {
+  id: number;
+  text: string;
+}
 
 const ERROR_TEXT: Record<MistakeInvalid, string> = {
   source: "출처를 골라주세요.",
@@ -47,6 +57,7 @@ export function MistakeForm({
   const [studyDay, setStudyDay] = useState(today);
   const [source, setSource] = useState<MistakeSource>(initialSource);
   const [values, setValues] = useState({ ...EMPTY, ref: initialRef });
+  const [choices, setChoices] = useState<ChoiceRow[]>([{ id: 0, text: "" }]);
   const [category, setCategory] = useState("");
   /** 이 화면에서 방금 적은 것. 저장됐는지 눈으로 확인하는 용도이고 목록 화면을 대신하지 않는다. */
   const [saved, setSaved] = useState<Mistake[]>([]);
@@ -55,13 +66,23 @@ export function MistakeForm({
 
   const inputs = useRef<Partial<Record<FieldKey, HTMLInputElement | null>>>({});
   const categoryRef = useRef<HTMLSelectElement>(null);
+  const choiceInputs = useRef(new Map<number, HTMLInputElement>());
+  const addChoiceRef = useRef<HTMLButtonElement>(null);
+  const nextChoiceId = useRef(1);
+  /** 방금 만든 줄. 화면에 붙는 순간 커서를 옮긴다. */
+  const focusChoice = useRef<number | null>(null);
   // IME 조합 중에 눌린 Enter 는 "변환 확정"이므로 칸 이동에 쓰면 안 된다.
   const composing = useRef(false);
 
   async function save() {
     if (saving) return;
     // 분류는 select 에서 직접 읽는다. Enter 로 저장할 때 state 가 한 박자 늦을 수 있다(아래 참고).
-    const input = { source, category: categoryRef.current?.value ?? category, ...values };
+    const input = {
+      source,
+      category: categoryRef.current?.value ?? category,
+      ...values,
+      question: joinChoices(choices.map((c) => c.text)),
+    };
     const checked = validateMistake(input);
     if (!checked.ok) {
       setError(ERROR_TEXT[checked.reason]);
@@ -80,6 +101,10 @@ export function MistakeForm({
       setSaved((s) => [res.mistake, ...s]);
       // 출처와 문항 번호는 남긴다. 같은 회차를 이어서 적으므로 번호 끝만 고치면 된다.
       setValues({ ...EMPTY, ref: res.mistake.ref ?? "" });
+      // 선택지 없이 넘긴 문항이었다면(줄이 0개) 다음 문항도 줄 없이 시작한다. 문법 회상처럼
+      // 선택지가 없는 문항이 이어질 때 Enter 한 번을 아낀다.
+      const fresh: ChoiceRow = { id: nextChoiceId.current++, text: "" };
+      setChoices((c) => (c.length === 0 ? [] : [fresh]));
       // 분류는 문항마다 새로 판단해야 하므로 비운다.
       setCategory("");
       const ref = inputs.current.ref;
@@ -94,15 +119,55 @@ export function MistakeForm({
     }
   }
 
-  function onEnter(e: React.KeyboardEvent<HTMLInputElement>, index: number) {
-    if (e.key !== "Enter") return;
+  /** 칸을 넘기는 Enter 인가. IME 조합을 확정하는 Enter 는 아니다. */
+  function isNextKey(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key !== "Enter") return false;
     // Safari 는 조합을 확정하는 Enter 를 compositionend 뒤에 보내서 isComposing 으로는
     // 걸러지지 않는다. 그 키는 keyCode 가 229 다.
-    if (e.nativeEvent.isComposing || composing.current || e.keyCode === 229) return;
+    return !(e.nativeEvent.isComposing || composing.current || e.keyCode === 229);
+  }
+
+  function onEnter(e: React.KeyboardEvent<HTMLInputElement>, index: number) {
+    if (!isNextKey(e)) return;
     e.preventDefault();
+    // 문항 번호 다음은 선택지다. 줄이 없으면 건너뛴다.
+    if (FIELDS[index].key === "ref" && choices.length > 0) {
+      choiceInputs.current.get(choices[0].id)?.focus();
+      return;
+    }
     const next = FIELDS[index + 1];
     if (next) inputs.current[next.key]?.focus();
     else categoryRef.current?.focus();
+  }
+
+  function addChoice() {
+    const id = nextChoiceId.current++;
+    focusChoice.current = id;
+    setChoices((c) => [...c, { id, text: "" }]);
+  }
+
+  function removeChoice(id: number) {
+    const at = choices.findIndex((c) => c.id === id);
+    // 커서를 잃으면 폰에서 키보드가 내려간다. 지운 자리의 다음 줄, 없으면 앞줄로 옮긴다.
+    const neighbor = choices[at + 1] ?? choices[at - 1];
+    if (neighbor) choiceInputs.current.get(neighbor.id)?.focus();
+    else addChoiceRef.current?.focus();
+    setChoices((c) => c.filter((row) => row.id !== id));
+  }
+
+  function onChoiceEnter(e: React.KeyboardEvent<HTMLInputElement>, index: number) {
+    if (!isNextKey(e)) return;
+    e.preventDefault();
+    // 빈 줄에서 Enter = 선택지는 여기까지. 빈 줄을 거두고 고른 답으로 간다.
+    if (e.currentTarget.value.trim() === "") {
+      const id = choices[index].id;
+      inputs.current.chosen?.focus();
+      setChoices((c) => c.filter((row) => row.id !== id));
+      return;
+    }
+    const next = choices[index + 1];
+    if (next) choiceInputs.current.get(next.id)?.focus();
+    else addChoice();
   }
 
   function field(index: number) {
@@ -199,12 +264,83 @@ export function MistakeForm({
 
       <div className="mt-4 flex flex-col gap-4">
         {field(0)}
-        {field(1)}
-        <div className="grid grid-cols-2 gap-3">
-          {field(2)}
-          {field(3)}
+
+        <div role="group" aria-label="선택지" className="flex flex-col gap-1.5">
+          <span className="text-sm text-muted">
+            선택지 <span className="text-xs">· 한 줄에 하나 · 없으면 비워 둔다</span>
+          </span>
+          {choices.length > 0 && (
+            <ol className="flex flex-col gap-2">
+              {choices.map((row, i) => (
+                <li key={row.id} className="flex items-center gap-2">
+                  <span
+                    aria-hidden
+                    className="w-5 shrink-0 text-right text-sm text-muted tabular-nums"
+                  >
+                    {i + 1}
+                  </span>
+                  <input
+                    ref={(el) => {
+                      if (!el) {
+                        choiceInputs.current.delete(row.id);
+                        return;
+                      }
+                      choiceInputs.current.set(row.id, el);
+                      if (focusChoice.current === row.id) {
+                        focusChoice.current = null;
+                        el.focus();
+                      }
+                    }}
+                    aria-label={`선택지 ${i + 1}`}
+                    value={row.text}
+                    lang="ja"
+                    maxLength={MISTAKE_TEXT_MAX}
+                    enterKeyHint="next"
+                    autoComplete="off"
+                    autoCapitalize="none"
+                    spellCheck={false}
+                    className="min-w-0 flex-1 rounded-lg border border-border bg-surface px-4 py-3 text-lg outline-none focus:border-accent"
+                    onChange={(e) => {
+                      const text = e.target.value;
+                      setChoices((c) => c.map((r) => (r.id === row.id ? { ...r, text } : r)));
+                    }}
+                    onCompositionStart={() => {
+                      composing.current = true;
+                    }}
+                    onCompositionEnd={() => {
+                      composing.current = false;
+                    }}
+                    onKeyDown={(e) => onChoiceEnter(e, i)}
+                  />
+                  {/* Tab 으로 칸을 넘길 때 걸리지 않게 뺀다. 빈 줄은 저장되지 않으므로 지우지 않아도 된다. */}
+                  <button
+                    type="button"
+                    tabIndex={-1}
+                    aria-label={`선택지 ${i + 1} 삭제`}
+                    onClick={() => removeChoice(row.id)}
+                    className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg border border-border text-xl text-muted"
+                  >
+                    ×
+                  </button>
+                </li>
+              ))}
+            </ol>
+          )}
+          <button
+            ref={addChoiceRef}
+            type="button"
+            onClick={addChoice}
+            className="rounded-lg border border-dashed border-border px-4 py-3 text-sm text-muted"
+          >
+            + 선택지 추가
+          </button>
         </div>
-        {field(4)}
+
+        <div className="grid grid-cols-2 gap-3">
+          {field(1)}
+          {field(2)}
+        </div>
+        {field(3)}
 
         <label className="flex flex-col gap-1.5">
           <span className="text-sm text-muted">
@@ -247,7 +383,10 @@ export function MistakeForm({
           ))}
         </dl>
 
-        <p className="text-xs text-muted">Enter = 다음 칸 · 분류에서 Enter = 저장하고 문항 번호로</p>
+        <p className="text-xs text-muted">
+          Enter = 다음 칸 · 선택지의 빈 줄에서 Enter = 고른 답으로 · 분류에서 Enter = 저장하고 문항
+          번호로
+        </p>
 
         {error && <p className="text-sm text-danger">{error}</p>}
 
@@ -280,7 +419,9 @@ export function MistakeForm({
                 <span className="rounded bg-warn-bg px-1.5 py-0.5 text-xs text-warn">
                   {m.category}
                 </span>
-                <span className="min-w-0 text-sm">{m.why ?? m.answer ?? m.question ?? m.chosen}</span>
+                <span className="min-w-0 text-sm">
+                  {m.why ?? m.answer ?? (splitChoices(m.question).join(" / ") || m.chosen)}
+                </span>
                 <span className="ml-auto text-xs text-muted tabular-nums">{m.study_day}</span>
               </li>
             ))}

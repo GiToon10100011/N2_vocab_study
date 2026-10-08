@@ -6,6 +6,8 @@ import {
   MISTAKE_SOURCES,
   MISTAKE_SOURCE_LABEL,
   MISTAKE_TEXT_MAX,
+  joinChoices,
+  splitChoices,
   validateMistake,
   type MistakeInput,
 } from "./mistakes";
@@ -144,5 +146,36 @@ describe("validateMistake", () => {
     expect(res.ok && Object.keys(res.value).sort()).toEqual(
       ["answer", "category", "chosen", "question", "ref", "source", "why"].sort(),
     );
+  });
+});
+
+describe("선택지", () => {
+  it("한 줄에 하나씩 잇고 빈 항목은 뺀다", () => {
+    expect(joinChoices([" あ ", "", "い", "   "])).toBe("あ\nい");
+    expect(joinChoices([])).toBe("");
+  });
+
+  it("저장한 것을 다시 항목으로 나눈다", () => {
+    expect(splitChoices("あ\nい\r\nう")).toEqual(["あ", "い", "う"]);
+    expect(splitChoices(null)).toEqual([]);
+  });
+
+  it("예전처럼 한 줄에 다 적은 행은 항목 하나로 읽고 글자를 바꾸지 않는다", () => {
+    expect(splitChoices("去年 / 去年に")).toEqual(["去年 / 去年に"]);
+    expect(validateMistake(base)).toMatchObject({ ok: true, value: { question: "去年 / 去年に" } });
+  });
+
+  it("선택지가 하나도 없어도 저장할 수 있다", () => {
+    expect(validateMistake({ ...base, question: joinChoices(["", " "]) })).toMatchObject({
+      ok: true,
+      value: { question: null },
+    });
+  });
+
+  it("폼을 거치지 않은 입력도 빈 줄과 줄 앞뒤 공백을 걷어낸다", () => {
+    expect(validateMistake({ ...base, question: " あ \n\n い \r\n" })).toMatchObject({
+      ok: true,
+      value: { question: "あ\nい" },
+    });
   });
 });

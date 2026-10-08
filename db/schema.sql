@@ -80,6 +80,11 @@ create table if not exists settings (
 -- 실제로 GitHub Actions 가 3일간 실패하는 동안 앱에서는 아무 표시도 없었다.
 alter table settings add column if not exists last_backup_at timestamptz;
 
+-- 되돌리기 시간(초). 채점한 뒤 손을 멈추고 이 시간이 지나면 채점이 확정되어 서버로 간다.
+-- 0 = 상시: 세션이 끝날 때까지 되돌릴 수 있다. 기본값 5 는 이 컬럼이 생기기 전의 동작과 같다.
+alter table settings add column if not exists undo_seconds smallint not null default 5
+  constraint settings_undo check (undo_seconds between 0 and 300);
+
 insert into settings (id) values (1) on conflict (id) do nothing;
 
 -- 오답노트. 문법·교재 오답을 분류와 함께 적어 두고 재확인한다.

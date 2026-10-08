@@ -1,6 +1,7 @@
 import { db } from "./db";
 import type { AppSettings, PromptType, StudyDayGroup, TodayCounts, Word } from "./types";
 import type { Mistake, MistakeDraft } from "./mistakes";
+import { DEFAULT_UNDO_SECONDS, normalizeUndoSeconds } from "./grade-outbox";
 import {
   DAY_START_HOUR,
   DEFAULT_NEW_LIMIT,
@@ -107,9 +108,12 @@ export async function fetchHomophoneCounts(): Promise<Record<string, number>> {
 
 export async function fetchSettings(): Promise<AppSettings> {
   const rows = (await db().query(
+    // undo_seconds 는 컬럼 이름으로 읽지 않는다. 이 조회는 모든 화면이 거치므로, 컬럼이 아직 없는
+    // DB 에 이 코드가 먼저 올라가면 앱 전체가 죽는다. 행을 jsonb 로 바꿔 꺼내면 없을 때 null 이다.
     `select new_limit, review_limit, weight_s2r, weight_s2m, weight_r2m, day_start_hour,
+            coalesce((to_jsonb(s) ->> 'undo_seconds')::int, ${DEFAULT_UNDO_SECONDS}) as undo_seconds,
             to_char(last_backup_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as last_backup_at
-       from settings where id = 1`,
+       from settings s where id = 1`,
   )) as Record<string, number | string | null>[];
   const r = rows[0];
   if (!r) {
@@ -118,6 +122,7 @@ export async function fetchSettings(): Promise<AppSettings> {
       reviewLimit: DEFAULT_REVIEW_LIMIT,
       weights: { ...DEFAULT_WEIGHTS },
       dayStartHour: DAY_START_HOUR,
+      undoSeconds: DEFAULT_UNDO_SECONDS,
       lastBackupAt: null,
     };
   }
@@ -127,19 +132,30 @@ export async function fetchSettings(): Promise<AppSettings> {
     reviewLimit: num("review_limit"),
     weights: { s2r: num("weight_s2r"), s2m: num("weight_s2m"), r2m: num("weight_r2m") },
     dayStartHour: num("day_start_hour"),
+    undoSeconds: normalizeUndoSeconds(num("undo_seconds")),
     lastBackupAt: (r.last_backup_at as string | null) ?? null,
   };
 }
 
 export async function saveSettings(s: AppSettings): Promise<void> {
   await db().query(
-    `insert into settings (id, new_limit, review_limit, weight_s2r, weight_s2m, weight_r2m, day_start_hour)
-     values (1, $1, $2, $3, $4, $5, $6)
+    `insert into settings (id, new_limit, review_limit, weight_s2r, weight_s2m, weight_r2m,
+                           day_start_hour, undo_seconds)
+     values (1, $1, $2, $3, $4, $5, $6, $7)
      on conflict (id) do update set
        new_limit = excluded.new_limit, review_limit = excluded.review_limit,
        weight_s2r = excluded.weight_s2r, weight_s2m = excluded.weight_s2m,
-       weight_r2m = excluded.weight_r2m, day_start_hour = excluded.day_start_hour`,
-    [s.newLimit, s.reviewLimit, s.weights.s2r, s.weights.s2m, s.weights.r2m, s.dayStartHour],
+       weight_r2m = excluded.weight_r2m, day_start_hour = excluded.day_start_hour,
+       undo_seconds = excluded.undo_seconds`,
+    [
+      s.newLimit,
+      s.reviewLimit,
+      s.weights.s2r,
+      s.weights.s2m,
+      s.weights.r2m,
+      s.dayStartHour,
+      s.undoSeconds,
+    ],
   );
 }
 

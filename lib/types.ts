@@ -98,6 +98,8 @@ export interface AppSettings {
   reviewLimit: number;
   weights: PromptWeights;
   dayStartHour: number;
+  /** 되돌리기 시간(초). 채점 뒤 손을 멈추고 이만큼 지나면 확정된다. 0 = 상시(세션이 끝날 때까지). */
+  undoSeconds: number;
   /** 마지막 자동 백업 시각(ISO). 백업이 멈춘 것을 앱에서 알아채기 위한 값. */
   lastBackupAt: string | null;
 }

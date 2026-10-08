@@ -28,13 +28,14 @@ export default async function StudyPage({
   const practice = range || flag !== null;
 
   let cards: QueueCard[];
+  let undoSeconds: number;
   let totalWords = 0;
   try {
-    cards = flag
-      ? (await loadFlagPracticeQueue(flag)).cards
+    ({ cards, undoSeconds } = flag
+      ? await loadFlagPracticeQueue(flag)
       : range
-        ? (await loadPracticeQueue(sp.from!, sp.to!)).cards
-        : (await loadTodayQueue(sp.skipNew === "1")).cards;
+        ? await loadPracticeQueue(sp.from!, sp.to!)
+        : await loadTodayQueue(sp.skipNew === "1"));
     if (!practice) {
       const { today } = await getSettingsAndToday();
       totalWords = (await fetchTodayCounts(today)).totalWords;
@@ -82,6 +83,7 @@ export default async function StudyPage({
     <StudySession
       initialCards={cards}
       practice={practice}
+      undoSeconds={undoSeconds}
       title={
         flag === "wrong"
           ? "오답노트"

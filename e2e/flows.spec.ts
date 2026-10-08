@@ -140,7 +140,7 @@ test.describe("학습 세션", () => {
     const after = await page.locator("header").textContent();
     expect(after).not.toBe(total); // 큐가 늘었다(재출제)
 
-    // 채점은 5장씩 모아 보낸다. 나가기 버튼이 떠나기 전에 확실히 보내는지도 함께 본다.
+    // 채점은 되돌리기 시간이 지나야 나간다. 나가기 버튼이 떠나기 전에 확실히 보내는지 본다.
     await page.getByRole("button", { name: "나가기" }).click();
     await page.waitForURL("**/");
     await page.waitForTimeout(800);

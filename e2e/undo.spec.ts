@@ -205,3 +205,54 @@ test.describe("채점 복구", () => {
     await expectAppliedOnce();
   });
 });
+
+test.describe("응답을 받지 못한 전송", () => {
+  test("서버가 반영했는데 응답이 닿지 않았으면, 다시 보내도 한 번만 반영된다", async ({
+    page,
+    context,
+  }) => {
+    await setUndoSeconds(0); // 상시: 세션 전체가 마지막에 한 묶음으로 나간다
+    await seedDue(2);
+
+    // 요청은 서버까지 보내고 응답만 끊는다. 마지막 카드를 끝내자마자 앱을 닫은 상황이다.
+    let cut = 0;
+    await page.route("**/api/grades", async (route) => {
+      await route.fetch();
+      cut++;
+      await route.abort();
+    });
+    await page.goto("/study");
+    await gradeCorrect(page, 2);
+    await expect(page.getByText("오늘의 학습 완료")).toBeVisible();
+    await expect.poll(reviewCount).toBe(2); // 서버는 반영했다
+    await expect.poll(() => cut).toBe(1);
+    // 클라이언트는 응답을 받지 못해 채점을 그대로 쥐고 있다.
+    await expect
+      .poll(() => page.evaluate(() => localStorage.getItem("n2v_pending_grades")))
+      .not.toBeNull();
+    await page.close();
+
+    // 다시 열면 남은 묶음을 또 보낸다. 서버는 같은 묶음임을 알아보고 반영하지 않는다.
+    const again = await context.newPage();
+    const answers: unknown[] = [];
+    again.on("response", (res) => {
+      if (res.url().includes("/api/grades")) void res.json().then((body) => answers.push(body));
+    });
+    await again.goto("/");
+    await expect.poll(() => answers).toEqual([{ ok: true, applied: 0, duplicate: true }]);
+    await expect
+      .poll(() => again.evaluate(() => localStorage.getItem("n2v_pending_grades")))
+      .toBeNull();
+
+    // 두 번 반영됐다면 리뷰가 4건, stage 가 4 가 된다.
+    expect(await reviewCount()).toBe(2);
+    const rows = await sql().query(
+      `select stage, correct_count from words where note = $1 order by surface`,
+      [MARK],
+    );
+    expect(rows).toEqual([
+      { stage: 3, correct_count: 3 },
+      { stage: 3, correct_count: 3 },
+    ]);
+  });
+});

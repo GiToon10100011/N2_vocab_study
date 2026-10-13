@@ -51,7 +51,7 @@ Environment Variables 에 넣는다. `.env.local` 의 값을 그대로 쓰면 �
 | `/words` | 단어 목록 · 검색 · 오답노트/취약/보류 필터 · 인라인 수정 · 삭제 |
 | `/study?filter=wrong` | 오답노트 연습 퀴즈 (`weak` 는 취약 단어) |
 | `/stats` | 오늘 / 최근 7일 / 전체 + 유형별 정답률 |
-| `/mistakes/new` | 문법·교재 오답 기록 (분류 7종) |
+| `/mistakes/new` | 문법·교재 오답 기록 (분류 7종) · 그날 푼 범위(시작~끝 번호) |
 | `/settings` | 되돌리기 시간 · 하루 분량 · 출제 비율 · 하루 시작 시각 · CSV 가져오기 |
 | `/api/export?format=csv` | CSV 백업 (엑셀 호환, BOM 포함) |
 | `/api/export?format=json` | JSON 백업 (리뷰 로그 포함) |

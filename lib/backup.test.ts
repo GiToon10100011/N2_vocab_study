@@ -27,4 +27,14 @@ describe("자동 백업 대상", () => {
 
     expect(readFileSync(".github/workflows/backup.yml", "utf8")).not.toContain("mistakes");
   });
+
+  // 풀이 범위(study_ranges)도 같다. 어느 날 어디까지 풀었는지는 공개 저장소에 올리지 않는다.
+  it("풀이 범위도 백업하지 않는다", () => {
+    expect(BACKUP_TABLES.map((t) => t.table)).not.toContain("study_ranges");
+
+    const ignored = readFileSync(".gitignore", "utf8").split("\n").map((l) => l.trim());
+    expect(ignored).toContain("backups/study_ranges.csv");
+
+    expect(readFileSync(".github/workflows/backup.yml", "utf8")).not.toContain("study_ranges");
+  });
 });

@@ -133,7 +133,7 @@ test.describe("오답 기록", () => {
     await page.keyboard.type("え");
 
     await page.getByLabel("분류").selectOption("문법 구별 실패");
-    await page.getByRole("button", { name: "저장" }).click();
+    await page.getByRole("button", { name: "저장", exact: true }).click();
     await expect(page.getByRole("status")).toContainText("마스터1500 7 · 문법 구별 실패");
     expect((await mistakeRows()).map((r) => r.question)).toEqual(["あ\nう\nえ"]);
 
@@ -146,7 +146,7 @@ test.describe("오답 기록", () => {
     await expect(page.getByLabel("고른 답")).toBeFocused();
     await expect(choices(page)).toHaveCount(0);
     await page.getByLabel("분류").selectOption("회상 실패");
-    await page.getByRole("button", { name: "저장" }).click();
+    await page.getByRole("button", { name: "저장", exact: true }).click();
     await expect(page.getByRole("status")).toContainText("마스터1500 8 · 회상 실패");
     expect((await mistakeRows()).map((r) => r.question)).toEqual(["あ\nう\nえ", null]);
 
@@ -161,13 +161,13 @@ test.describe("오답 기록", () => {
   }) => {
     await page.goto("/mistakes/new");
     await page.getByLabel("문항 번호").fill("12");
-    await page.getByRole("button", { name: "저장" }).click();
+    await page.getByRole("button", { name: "저장", exact: true }).click();
     await expect(page.getByText("분류를 골라주세요.")).toBeVisible();
     expect(await mistakeRows()).toHaveLength(0);
 
     await page.getByRole("button", { name: "어제" }).click();
     await page.getByLabel("분류").selectOption("회상 실패");
-    await page.getByRole("button", { name: "저장" }).click();
+    await page.getByRole("button", { name: "저장", exact: true }).click();
 
     await expect(page.getByRole("status")).toContainText("저장했습니다 · 마스터1500 12 · 회상 실패");
     expect(await mistakeRows()).toEqual([
@@ -181,6 +181,139 @@ test.describe("오답 기록", () => {
         category: "회상 실패",
         study_day: YESTERDAY,
         resolved_at: null,
+      },
+    ]);
+  });
+});
+
+async function rangeRows() {
+  return (await sql().query(
+    `select source, to_char(study_day, 'YYYY-MM-DD') as study_day, from_no, to_no
+       from study_ranges order by study_day, source`,
+  )) as Record<string, unknown>[];
+}
+
+test.describe("풀이 범위", () => {
+  test("오답이 없어도 범위만 저장되고, 같은 날 다시 저장하면 그 줄을 고쳐 쓴다", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 844 }); // 폰 크기
+    await page.goto("/mistakes/new");
+    const from = page.getByLabel("시작 번호");
+    const to = page.getByLabel("끝 번호");
+    const saveRange = page.getByRole("button", { name: "범위 저장" });
+
+    // 폰에서 숫자 자판이 뜨고, 버튼은 손가락으로 누를 만한 크기다.
+    await expect(from).toHaveAttribute("inputmode", "numeric");
+    await expect(to).toHaveAttribute("inputmode", "numeric");
+    expect((await saveRange.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    await expect(page.getByText("오늘 저장된 범위가 없습니다")).toBeVisible();
+
+    await from.fill("11");
+    await from.press("Enter");
+    await expect(to).toBeFocused();
+    await page.keyboard.type("20");
+    await page.keyboard.press("Enter"); // 끝 번호에서 Enter = 저장
+    await expect(page.getByText("오늘 저장된 범위 · 마스터1500 11~20번 (10문항)")).toBeVisible();
+    await expect(page.getByLabel("문항 번호")).toBeFocused(); // 이어서 오답을 적는다
+    expect(await rangeRows()).toEqual([
+      { source: "master1500", study_day: TODAY, from_no: 11, to_no: 20 },
+    ]);
+    expect(await mistakeRows()).toHaveLength(0);
+
+    // 끝 번호를 잘못 적었다. 다시 저장하면 줄이 늘지 않고 고쳐진다.
+    await to.fill("21");
+    await saveRange.click();
+    await expect(page.getByText("오늘 저장된 범위 · 마스터1500 11~21번 (11문항)")).toBeVisible();
+    expect(await rangeRows()).toEqual([
+      { source: "master1500", study_day: TODAY, from_no: 11, to_no: 21 },
+    ]);
+
+    // 거꾸로 적으면 저장하지 않는다.
+    await to.fill("5");
+    await saveRange.click();
+    await expect(page.getByText("끝 번호가 시작 번호보다 앞입니다.")).toBeVisible();
+    expect(await rangeRows()).toEqual([
+      { source: "master1500", study_day: TODAY, from_no: 11, to_no: 21 },
+    ]);
+
+    // 다시 열어도 보이고, 칸에는 저장한 값이 들어 있다.
+    await page.reload();
+    await expect(page.getByText("오늘 저장된 범위 · 마스터1500 11~21번 (11문항)")).toBeVisible();
+    await expect(from).toHaveValue("11");
+    await expect(to).toHaveValue("21");
+  });
+
+  test("교재와 학습일마다 한 줄씩 남고, 다음 날은 이어지는 번호에서 시작하며, 범위 안의 오답 수를 조회할 수 있다", async ({
+    page,
+  }) => {
+    await sql().query(
+      `insert into study_ranges (source, study_day, from_no, to_no)
+       values ('master1500', $1::date, 11, 20)`,
+      [YESTERDAY],
+    );
+    // 범위 안 2건, 범위 밖 1건, 숫자가 아닌 번호 1건, 다른 날 1건.
+    for (const [ref, day] of [
+      ["13", YESTERDAY],
+      ["17", YESTERDAY],
+      ["25", YESTERDAY],
+      ["Part A-3", YESTERDAY],
+      ["15", TODAY],
+    ]) {
+      await sql().query(
+        `insert into mistakes (source, ref, category, study_day)
+         values ('master1500', $1, '회상 실패', $2::date)`,
+        [ref, day],
+      );
+    }
+
+    await page.goto("/mistakes/new");
+    const from = page.getByLabel("시작 번호");
+    const to = page.getByLabel("끝 번호");
+    // 오늘 것은 아직 없다. 시작 번호는 어제 끝난 다음 번호다.
+    await expect(from).toHaveValue("21");
+    await expect(to).toHaveValue("");
+
+    // 어제로 바꾸면 어제 저장한 범위가 칸에 들어온다.
+    await page.getByRole("button", { name: "어제" }).click();
+    await expect(page.getByText("어제 저장된 범위 · 마스터1500 11~20번 (10문항)")).toBeVisible();
+    await expect(from).toHaveValue("11");
+    await expect(to).toHaveValue("20");
+
+    // 다른 교재는 같은 날에도 따로 남는다.
+    await page.getByRole("button", { name: "문법" }).click();
+    await expect(from).toHaveValue("");
+    await from.fill("3");
+    await to.fill("7");
+    await to.press("Enter");
+    await expect(
+      page.getByText("어제 저장된 범위 · 마스터1500 11~20번 (10문항) · 문법 3~7번 (5문항)"),
+    ).toBeVisible();
+
+    // 앱 밖에서 읽기 전용으로 조회한다.
+    const summary = await sql().query(
+      `select source, to_char(study_day, 'YYYY-MM-DD') as study_day, from_no, to_no,
+              solved, mistakes, mistake_refs
+         from study_range_summary order by source`,
+    );
+    expect(summary).toEqual([
+      {
+        source: "grammar",
+        study_day: YESTERDAY,
+        from_no: 3,
+        to_no: 7,
+        solved: 5,
+        mistakes: 0,
+        mistake_refs: [],
+      },
+      {
+        source: "master1500",
+        study_day: YESTERDAY,
+        from_no: 11,
+        to_no: 20,
+        solved: 10,
+        mistakes: 2,
+        mistake_refs: ["13", "17"],
       },
     ]);
   });

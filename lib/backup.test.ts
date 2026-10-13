@@ -13,6 +13,8 @@ describe("자동 백업 대상", () => {
     const tables = BACKUP_TABLES.map((t) => t.table);
     expect(tables).toContain("words"); // 빈 목록을 읽고 통과하는 일이 없게
     expect(tables).not.toContain("mistakes");
+    // 반영한 채점 묶음의 기록도 넣지 않는다. 공개 저장소에 새 종류의 데이터를 올리지 않는다.
+    expect(tables).not.toContain("grade_batches");
   });
 
   it("목록 밖의 테이블을 따로 덤프하지 않고, 파일이 생겨도 커밋되지 않는다", () => {

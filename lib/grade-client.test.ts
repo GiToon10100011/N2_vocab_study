@@ -11,7 +11,7 @@ const g = (n: number): GradeInput => ({
 
 /** 탭을 닫았다 열어도 남는 저장소. 모듈을 새로 불러오는 것이 페이지를 새로 여는 것에 해당한다. */
 const disk = new Map<string, string>();
-const server = { ok: true, requests: 0 };
+const server = { ok: true, requests: 0, bodies: [] as unknown[] };
 
 async function openPage() {
   vi.resetModules();
@@ -25,6 +25,7 @@ beforeEach(() => {
   disk.clear();
   server.ok = true;
   server.requests = 0;
+  server.bodies = [];
   vi.stubGlobal("window", {
     localStorage: {
       getItem: (k: string) => disk.get(k) ?? null,
@@ -33,8 +34,9 @@ beforeEach(() => {
     },
   });
   vi.stubGlobal("navigator", {});
-  vi.stubGlobal("fetch", async () => {
+  vi.stubGlobal("fetch", async (_url: string, init: { body: string }) => {
     server.requests++;
+    server.bodies.push(JSON.parse(init.body));
     return { ok: server.ok, json: async () => ({ ok: server.ok }) };
   });
 });
@@ -72,6 +74,14 @@ describe("학습을 시작하기 전의 복구", () => {
     expect(await page.recoverBeforeSession()).toEqual({ reload: true, failed: 0 });
     expect(await background).toBe(2);
     expect(server.requests).toBe(1); // 같은 채점을 두 번 보내지 않는다
+  });
+
+  it("묶음 id 를 요청에 실어 보낸다. 서버가 같은 묶음을 두 번 반영하지 않게 하는 열쇠다", async () => {
+    leftBehind(g(1));
+    const page = await openPage();
+    await page.recoverBeforeSession();
+
+    expect(server.bodies).toEqual([{ grades: [g(1)], practice: false, batchId: "old" }]);
   });
 
   it("전송에 실패하면 남겨 두고 실패한 수를 알린다", async () => {

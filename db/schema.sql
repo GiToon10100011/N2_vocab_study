@@ -59,6 +59,16 @@ create index if not exists reviews_at   on reviews (reviewed_at);
 create index if not exists reviews_word on reviews (word_id);
 create index if not exists reviews_wrong on reviews (word_id, reviewed_at desc) where correct = false;
 
+-- 이미 반영한 채점 요청. 서버가 반영했는데 클라이언트가 응답을 받지 못하면 같은 묶음을 다시 보낸다.
+-- 그때 한 번 더 반영하지 않으려고 적어 둔다. 채점 반영과 같은 트랜잭션에서 넣으므로,
+-- 여기에 있으면 반영된 것이고 없으면 반영되지 않은 것이다.
+-- id = 묶음 id + 그 요청에 담긴 채점 내용의 해시. 같은 묶음 id 라도 내용이 다르면 다른 요청이다
+-- (큰 묶음은 나눠서 온다). 180일이 지난 것은 다음 반영 때 함께 지운다.
+create table if not exists grade_batches (
+  id          text        primary key,
+  applied_at  timestamptz not null default now()
+);
+
 -- 설정. 1인용이므로 항상 id = 1 한 행만 쓴다.
 create table if not exists settings (
   id              smallint primary key default 1,

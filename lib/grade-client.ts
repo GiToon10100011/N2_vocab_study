@@ -70,7 +70,8 @@ const send: SendGrades = async (batch) => {
     const res = await fetch("/api/grades", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ grades: batch.grades, practice: batch.practice }),
+      // batchId 는 서버가 같은 묶음을 두 번 반영하지 않게 하는 데 쓴다.
+      body: JSON.stringify({ grades: batch.grades, practice: batch.practice, batchId: batch.id }),
       signal: ctrl.signal,
     });
     if (!res.ok) return false;

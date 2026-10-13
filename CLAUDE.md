@@ -38,7 +38,8 @@ lib/grade-outbox.ts  되돌리기 창과 미전송 채점 보관. 저장소·전
 lib/grade-client.ts  위 규칙에 localStorage 와 fetch 를 붙이는 브라우저 쪽 연결부. 전송을 한 줄로 세우고,
                      학습 화면이 큐를 새로 받아야 하는지 정한다
 lib/actions/       Server Action ("use server")
-app/api/grades/    채점 배치. 클라이언트가 fetch 로 보내고 응답의 ok 를 확인한다(Route Handler)
+app/api/grades/    채점 배치. 클라이언트가 fetch 로 보내고 응답의 ok 를 확인한다(Route Handler).
+                   같은 묶음은 한 번만 반영한다
 app/study/         세션 화면. CardFace 는 테스트를 위해 분리되어 있다
 app/mistakes/new/  오답 입력 폼. 목록(/mistakes)은 아직 없다 — PLAN-mistakes.md 3단계
 app/manifest.ts    PWA 매니페스트. 아이콘은 scripts/make-icons.mjs 가 생성한다
@@ -61,6 +62,12 @@ proxy.ts           비밀번호 게이트 (Next 16 에서 middleware 는 proxy �
 - **채점은 서버가 `ok` 라고 답한 뒤에만 저장소에서 지운다.** 그 전에는 localStorage 에 있고 다음 진입 때
   먼저 보낸다. **탭을 닫는 순간에 보내지 말 것**(`sendBeacon`·`keepalive`). 도착을 확인할 수 없는
   전송은 보냈다고 치면 잃고, 남겨 두면 두 번 반영된다. 같은 이유로 전송은 한 번에 하나만 돈다.
+- **같은 채점 묶음은 서버가 한 번만 반영한다.** 서버가 반영했는데 응답이 닿기 전에 앱이 닫히면 그 묶음은
+  저장소에 남아 다시 간다. 클라이언트는 묶음 id 를 같이 보내고, 서버는 「묶음 id + 그 요청에 담긴 채점
+  내용의 해시」를 `grade_batches` 에 **채점 반영과 같은 트랜잭션에서** 적는다. 이미 있으면 반영하지 않고
+  `ok` 로 답한다. **기록과 반영을 따로 하지 말 것** — 반영이 실패한 묶음이 「이미 받았다」로 건너뛰어져
+  채점이 사라진다. **id 만 열쇠로 쓰지도 말 것** — 큰 묶음은 나눠서 오고, 다음 조각이 버려진다.
+  id 없이 온 요청(예전 화면)은 그대로 반영한다. `grade_batches` 도 백업하지 않는다.
 - 학습 화면은 미전송 채점이 남아 있으면 그것부터 보내고 **큐를 새로 받는다**. 받은 큐는 그 채점이
   반영되기 전에 만들어진 것이라, 그대로 시작하면 이미 푼 카드를 다시 풀고 두 번 반영된다.
 - `fetchSettings` 는 `undo_seconds` 를 `to_jsonb` 로 읽는다. 모든 화면이 거치는 조회라, 컬럼이 없는 DB 에
@@ -87,9 +94,9 @@ proxy.ts           비밀번호 게이트 (Next 16 에서 middleware 는 proxy �
 ## 검증
 
 ```bash
-npm test          # 104개 (SRS 전이표, 유형 분포, 큐, 읽기 변환, 파서, 카드 누출, 오답 검증, 백업 대상, 되돌리기 창, 채점 복구)
-npm run test:db   # 20개 (실제 Neon 왕복)
-npm run test:e2e  # 23개 (브라우저, 격리 DB)
+npm test          # 107개 (SRS 전이표, 유형 분포, 큐, 읽기 변환, 파서, 카드 누출, 오답 검증, 백업 대상, 되돌리기 창, 채점 복구)
+npm run test:db   # 28개 (실제 Neon 왕복)
+npm run test:e2e  # 24개 (브라우저, 격리 DB)
 npm run typecheck
 npx eslint .
 npm run build

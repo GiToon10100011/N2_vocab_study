@@ -227,6 +227,55 @@ describe("백업과 복구", () => {
     expect(readOutbox(storage)).toEqual([]);
   });
 
+  it("응답을 받지 못해 다시 보낼 때 묶음 id 와 내용이 그대로다", async () => {
+    // 서버는 id 와 내용이 같은 요청을 한 번만 반영한다. 다시 보내는 쪽이 둘 중 하나라도 바꾸면
+    // 서버는 새 요청으로 보고 한 번 더 반영한다.
+    const storage = memoryStorage([{ id: "b1", practice: false, grades: [g(1), g(2)] }]);
+    const received: { id: string; practice: boolean; grades: GradeInput[] }[] = [];
+    let answered = false;
+    const send: SendGrades = async (batch) => {
+      received.push({ ...batch, grades: [...batch.grades] });
+      return answered; // 처음에는 서버가 받았지만 응답이 닿지 않았다
+    };
+
+    expect(await deliverOutbox(storage, send)).toEqual({ delivered: 0, failed: 2 });
+    answered = true;
+    expect(await deliverOutbox(storage, send)).toEqual({ delivered: 2, failed: 0 });
+
+    expect(received).toHaveLength(2);
+    expect(received[1]).toEqual(received[0]);
+    expect(received[0].id).toBe("b1");
+    expect(readOutbox(storage)).toEqual([]);
+  });
+
+  it("창이 닫힐 때마다 다른 묶음 id 로 나간다", async () => {
+    const ids: string[] = [];
+    const storage = memoryStorage();
+    let n = 0;
+    const buffer = new UndoBuffer({
+      undoSeconds: 0,
+      practice: false,
+      storage,
+      deliver: (skipId) =>
+        deliverOutbox(
+          storage,
+          async (batch) => {
+            ids.push(batch.id);
+            return true;
+          },
+          skipId(),
+        ),
+      onClose() {},
+      newId: () => `s${++n}`,
+    });
+
+    buffer.add(g(1));
+    await buffer.close();
+    buffer.add(g(2));
+    await buffer.close();
+    expect(ids).toEqual(["s1", "s2"]);
+  });
+
   it("200건씩 끊어 보내고 서버가 받은 만큼만 지운다", async () => {
     const all = Array.from({ length: 450 }, (_, i) => g(i));
     const storage = memoryStorage([{ id: "big", practice: false, grades: all }]);

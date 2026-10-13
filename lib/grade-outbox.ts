@@ -39,8 +39,17 @@ export interface OutboxBatch {
 
 export type OutboxStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
-/** 서버가 받았다고 답했을 때만 true. */
-export type SendGrades = (batch: { practice: boolean; grades: GradeInput[] }) => Promise<boolean>;
+/**
+ * 서버가 받았다고 답했을 때만 true.
+ *
+ * id 는 묶음 id 다. 서버가 반영했는데 응답이 닿지 않으면 같은 묶음을 다시 보내게 되는데, 서버는
+ * id 와 내용이 같은 요청을 한 번만 반영한다. 그래서 다시 보낼 때는 id 도 내용도 그대로여야 한다.
+ */
+export type SendGrades = (batch: {
+  id: string;
+  practice: boolean;
+  grades: GradeInput[];
+}) => Promise<boolean>;
 
 /** 채점 건수 기준. */
 export interface Delivery {
@@ -108,7 +117,7 @@ export async function deliverOutbox(
       const batch = readOutbox(storage).find((b) => b.id === id);
       if (!batch) break;
       const chunk = batch.grades.slice(0, CHUNK);
-      if (!(await send({ practice: batch.practice, grades: chunk }))) {
+      if (!(await send({ id, practice: batch.practice, grades: chunk }))) {
         result.failed += batch.grades.length;
         break;
       }

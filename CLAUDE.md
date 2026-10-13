@@ -34,6 +34,7 @@ lib/kana.ts        읽기 확정 변환. 부분 변환 금지
 lib/parse.ts       붙여넣기 파서
 lib/settings.ts    설정 + 하루 경계 기준 오늘 날짜
 lib/mistakes.ts    오답노트 고정 값(출처 3종 · 분류 7종)과 입력 검증. 순수 함수
+lib/study-ranges.ts  풀이 범위(그날 푼 문항의 시작·끝 번호) 검증과 칸에 먼저 채울 값. 순수 함수
 lib/grade-outbox.ts  되돌리기 창과 미전송 채점 보관. 저장소·전송을 받아 쓰므로 그대로 테스트한다
 lib/grade-client.ts  위 규칙에 localStorage 와 fetch 를 붙이는 브라우저 쪽 연결부. 전송을 한 줄로 세우고,
                      학습 화면이 큐를 새로 받아야 하는지 정한다
@@ -41,7 +42,7 @@ lib/actions/       Server Action ("use server")
 app/api/grades/    채점 배치. 클라이언트가 fetch 로 보내고 응답의 ok 를 확인한다(Route Handler).
                    같은 묶음은 한 번만 반영한다
 app/study/         세션 화면. CardFace 는 테스트를 위해 분리되어 있다
-app/mistakes/new/  오답 입력 폼. 목록(/mistakes)은 아직 없다 — PLAN-mistakes.md 3단계
+app/mistakes/new/  오답 입력 폼과 풀이 범위 입력. 목록(/mistakes)은 아직 없다 — PLAN-mistakes.md 3단계
 app/manifest.ts    PWA 매니페스트. 아이콘은 scripts/make-icons.mjs 가 생성한다
 public/sw.js       서비스 워커. 정적 자산만 캐시한다
 proxy.ts           비밀번호 게이트 (Next 16 에서 middleware 는 proxy 로 이름이 바뀌었다)
@@ -78,6 +79,8 @@ proxy.ts           비밀번호 게이트 (Next 16 에서 middleware 는 proxy �
 
 - **스키마를 바꾸면 `npm run db:migrate -- --all`** 로 돌린다. E2E 는 별도 데이터베이스
   (`n2v_e2e`)를 쓰므로 한쪽만 갱신하면 브라우저 테스트가 통째로 깨진다.
+  이 명령은 항상 운영 DB 부터 적용한다. 운영 반영 전에 격리 DB 에만 먼저 올리려면
+  `DATABASE_URL` 을 격리 DB 주소로 바꿔 `node scripts/migrate.mjs` 를 직접 돌린다.
 - **오답노트(`mistakes`)의 분류 7종은 늘리지 않는다.** 덱/태그가 아니라 고정 값이다.
   분류 옆 한 줄 설명의 원본은 Obsidian 「오답 분류 기준」 표다. `lib/mistakes.ts` 에서 문구를
   지어내지 말고, 값을 바꾸면 `db/schema.sql` 의 CHECK 와 함께 바꾼다(단위 테스트가 대조한다).
@@ -90,13 +93,23 @@ proxy.ts           비밀번호 게이트 (Next 16 에서 middleware 는 proxy �
   `backups/` 가 그대로 커밋되는데, 오답 기록에는 교재 문항 내용과 개인 메모가 들어가기 때문이다.
   `scripts/backup-tables.mjs` 에 `mistakes` 를 넣지 말고 `.gitignore` 의 `backups/mistakes.csv` 도
   지우지 말 것(`lib/backup.test.ts` 가 막는다). 오답 기록은 DB 에만 있고 자동 백업이 없다.
+  **풀이 범위(`study_ranges`)도 같은 이유로 백업하지 않는다.**
+- **풀이 범위는 교재·학습일마다 한 줄이다.** `study_ranges` 의 기본 키가 `(source, study_day)` 이고
+  같은 날 다시 저장하면 덮어쓴다(오타 수정). 오답이 0건인 날에도 어디까지 풀었는지 남기려는 표다.
+  범위 안의 오답 수는 표에 두지 않는다. 읽기 전용 뷰 `study_range_summary` 가 `mistakes` 에서 세고,
+  문항 번호가 숫자뿐인 오답만 범위와 견준다. 앱은 이 뷰를 쓰지 않는다.
+- `study_ranges` 통합 테스트 픽스처는 **학습일이 1900년**이다. 열쇠가 (교재, 학습일)이고 교재는
+  3종 고정이라 실제 기록과 겹치지 않게 할 수 있는 것이 날짜뿐이다(규칙 7과 같은 이유).
+  학습일을 생략한 저장은 통합 테스트에서 부르지 말 것 — 오늘 날짜로 들어가 실제 줄을 덮어쓴다.
+- `fetchRecentStudyRanges` 는 표가 없는 DB 에서 null 을 주고, 그때 화면은 범위 칸만 감춘다.
+  스키마보다 코드가 먼저 올라가도 쓰고 있는 오답 입력 화면이 죽지 않게 하려는 것이다.
 
 ## 검증
 
 ```bash
-npm test          # 107개 (SRS 전이표, 유형 분포, 큐, 읽기 변환, 파서, 카드 누출, 오답 검증, 백업 대상, 되돌리기 창, 채점 복구)
-npm run test:db   # 28개 (실제 Neon 왕복)
-npm run test:e2e  # 24개 (브라우저, 격리 DB)
+npm test          # 120개 (SRS 전이표, 유형 분포, 큐, 읽기 변환, 파서, 카드 누출, 오답 검증, 백업 대상, 되돌리기 창, 채점 복구, 풀이 범위)
+npm run test:db   # 34개 (실제 Neon 왕복)
+npm run test:e2e  # 26개 (브라우저, 격리 DB)
 npm run typecheck
 npx eslint .
 npm run build

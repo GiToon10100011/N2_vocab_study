@@ -16,7 +16,15 @@ import {
   type MistakeInvalid,
   type MistakeSource,
 } from "@/lib/mistakes";
+import { saveStudyRangeAction } from "@/lib/actions/study-ranges";
 import { addDays } from "@/lib/srs";
+import {
+  STUDY_RANGE_MAX,
+  draftStudyRange,
+  validateStudyRange,
+  type StudyRange,
+  type StudyRangeInvalid,
+} from "@/lib/study-ranges";
 
 /**
  * 칸 순서는 Obsidian 「오답 보고 형식」과 같다. Enter 체인도 이 순서로 흐른다.
@@ -45,17 +53,35 @@ const ERROR_TEXT: Record<MistakeInvalid, string> = {
   too_long: `너무 깁니다. 문항 번호는 ${MISTAKE_REF_MAX}자, 나머지 칸은 ${MISTAKE_TEXT_MAX}자까지입니다.`,
 };
 
+const RANGE_ERROR_TEXT: Record<StudyRangeInvalid, string> = {
+  source: "출처를 골라주세요.",
+  number: `시작 번호와 끝 번호를 1~${STUDY_RANGE_MAX} 사이의 숫자로 적어주세요.`,
+  order: "끝 번호가 시작 번호보다 앞입니다.",
+};
+
 export function MistakeForm({
   today,
   initialSource,
   initialRef,
+  initialRanges,
 }: {
   today: string;
   initialSource: MistakeSource;
   initialRef: string;
+  /** 최근에 적은 풀이 범위. 표가 아직 없는 DB 에서는 null 이고, 그때는 범위 칸을 감춘다. */
+  initialRanges: StudyRange[] | null;
 }) {
   const [studyDay, setStudyDay] = useState(today);
   const [source, setSource] = useState<MistakeSource>(initialSource);
+  const [ranges, setRanges] = useState(initialRanges);
+  /** 범위 칸에 친 그대로. 학습일이나 출처를 바꾸면 그 날 그 교재의 것으로 다시 채운다. */
+  const [range, setRange] = useState(() =>
+    draftStudyRange(initialRanges ?? [], initialSource, today),
+  );
+  const [rangeSaving, setRangeSaving] = useState(false);
+  const [rangeError, setRangeError] = useState<string | null>(null);
+  const fromRef = useRef<HTMLInputElement>(null);
+  const toRef = useRef<HTMLInputElement>(null);
   const [values, setValues] = useState({ ...EMPTY, ref: initialRef });
   const [choices, setChoices] = useState<ChoiceRow[]>([{ id: 0, text: "" }]);
   const [category, setCategory] = useState("");
@@ -116,6 +142,47 @@ export function MistakeForm({
       setError("저장에 실패했습니다. 네트워크를 확인해주세요.");
     } finally {
       setSaving(false);
+    }
+  }
+
+  /** 학습일이나 출처를 바꾼다. 범위 칸은 그 날 그 교재의 것으로 다시 채운다. */
+  function pick(nextSource: MistakeSource, nextDay: string) {
+    setSource(nextSource);
+    setStudyDay(nextDay);
+    setRange(draftStudyRange(ranges ?? [], nextSource, nextDay));
+    setRangeError(null);
+  }
+
+  async function saveRange() {
+    if (rangeSaving) return;
+    const input = { source, from: range.from, to: range.to };
+    const checked = validateStudyRange(input);
+    if (!checked.ok) {
+      setRangeError(RANGE_ERROR_TEXT[checked.reason]);
+      // 시작 번호는 채워져 있는 경우가 많다. 비어 있을 때만 그쪽으로 간다.
+      (range.from.trim() === "" ? fromRef : toRef).current?.focus();
+      return;
+    }
+    setRangeSaving(true);
+    setRangeError(null);
+    try {
+      const res = await saveStudyRangeAction({ ...input, studyDay });
+      if (!res.ok) {
+        setRangeError(RANGE_ERROR_TEXT[res.reason]);
+        return;
+      }
+      const done = res.range;
+      setRanges((rs) => [
+        done,
+        ...(rs ?? []).filter((r) => r.source !== done.source || r.study_day !== done.study_day),
+      ]);
+      setRange({ from: String(done.from_no), to: String(done.to_no) });
+      // 범위를 적었으면 이어서 오답을 적는다.
+      inputs.current.ref?.focus();
+    } catch {
+      setRangeError("저장에 실패했습니다. 네트워크를 확인해주세요.");
+    } finally {
+      setRangeSaving(false);
     }
   }
 
@@ -204,7 +271,38 @@ export function MistakeForm({
     );
   }
 
+  /** 번호 칸. 숫자 자판이 뜨고, 채워 둔 번호는 지우지 않고 바로 덮어쓸 수 있게 통째로 고른다. */
+  function rangeInput(key: "from" | "to") {
+    const isFrom = key === "from";
+    return (
+      <input
+        ref={isFrom ? fromRef : toRef}
+        aria-label={isFrom ? "시작 번호" : "끝 번호"}
+        value={range[key]}
+        inputMode="numeric"
+        pattern="[0-9]*"
+        maxLength={4}
+        enterKeyHint={isFrom ? "next" : "done"}
+        autoComplete="off"
+        className="w-20 rounded-lg border border-border bg-bg px-2 py-2.5 text-center text-lg tabular-nums outline-none focus:border-accent"
+        onChange={(e) => setRange((r) => ({ ...r, [key]: e.target.value }))}
+        onFocus={(e) => e.target.select()}
+        onKeyDown={(e) => {
+          if (!isNextKey(e)) return;
+          e.preventDefault();
+          if (isFrom) toRef.current?.focus();
+          else void saveRange();
+        }}
+      />
+    );
+  }
+
   const last = saved[0];
+  const dayLabel =
+    studyDay === today ? "오늘" : studyDay === addDays(today, -1) ? "어제" : studyDay;
+  const dayRanges = MISTAKE_SOURCES.flatMap((s) =>
+    (ranges ?? []).filter((r) => r.source === s && r.study_day === studyDay),
+  );
 
   return (
     <main className="mx-auto max-w-2xl px-5 py-8">
@@ -222,13 +320,13 @@ export function MistakeForm({
         <input
           type="date"
           value={studyDay}
-          onChange={(e) => e.target.value && setStudyDay(e.target.value)}
+          onChange={(e) => e.target.value && pick(source, e.target.value)}
           aria-label="학습일"
           className="rounded-md border border-border bg-bg px-2 py-1 text-sm"
         />
         <button
           type="button"
-          onClick={() => setStudyDay(today)}
+          onClick={() => pick(source, today)}
           className={`rounded-md px-2 py-1 text-xs ${
             studyDay === today ? "bg-accent text-accent-fg" : "border border-border"
           }`}
@@ -237,7 +335,7 @@ export function MistakeForm({
         </button>
         <button
           type="button"
-          onClick={() => setStudyDay(addDays(today, -1))}
+          onClick={() => pick(source, addDays(today, -1))}
           className={`rounded-md px-2 py-1 text-xs ${
             studyDay === addDays(today, -1) ? "bg-accent text-accent-fg" : "border border-border"
           }`}
@@ -252,7 +350,7 @@ export function MistakeForm({
             key={s}
             type="button"
             aria-pressed={source === s}
-            onClick={() => setSource(s)}
+            onClick={() => pick(s, studyDay)}
             className={`rounded-full px-4 py-2 text-sm ${
               source === s ? "bg-fg text-bg" : "border border-border text-muted"
             }`}
@@ -261,6 +359,40 @@ export function MistakeForm({
           </button>
         ))}
       </div>
+
+      {ranges && (
+        <section className="mt-4 rounded-xl border border-border bg-surface px-4 py-3">
+          <p className="text-sm text-muted">
+            푼 범위 <span className="text-xs">· 오답이 없어도 적는다 · 교재마다 하루 한 줄</span>
+          </p>
+          <div className="mt-2 flex items-center gap-2">
+            {rangeInput("from")}
+            <span className="text-muted">~</span>
+            {rangeInput("to")}
+            <button
+              type="button"
+              onClick={() => void saveRange()}
+              disabled={rangeSaving}
+              className="ml-auto rounded-lg border border-border px-4 py-3 text-sm font-semibold disabled:opacity-50"
+            >
+              범위 저장
+            </button>
+          </div>
+          <p className="mt-2 text-xs text-muted">
+            {dayRanges.length > 0
+              ? `${dayLabel} 저장된 범위 · ${dayRanges
+                  .map(
+                    (r) =>
+                      `${MISTAKE_SOURCE_LABEL[r.source]} ${r.from_no}~${r.to_no}번 (${
+                        r.to_no - r.from_no + 1
+                      }문항)`,
+                  )
+                  .join(" · ")}`
+              : `${dayLabel} 저장된 범위가 없습니다`}
+          </p>
+          {rangeError && <p className="mt-1 text-sm text-danger">{rangeError}</p>}
+        </section>
+      )}
 
       <div className="mt-4 flex flex-col gap-4">
         {field(0)}

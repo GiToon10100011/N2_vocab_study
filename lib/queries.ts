@@ -1,6 +1,7 @@
 import { db } from "./db";
 import type { AppSettings, PromptType, StudyDayGroup, TodayCounts, Word } from "./types";
 import type { Mistake, MistakeDraft } from "./mistakes";
+import type { StudyRange } from "./study-ranges";
 import { DEFAULT_UNDO_SECONDS, normalizeUndoSeconds } from "./grade-outbox";
 import {
   DAY_START_HOUR,
@@ -492,4 +493,38 @@ export async function insertMistake(
 export async function fetchLastMistakeRef(): Promise<Pick<Mistake, "source" | "ref"> | null> {
   const rows = await db().query(`select source, ref from mistakes order by id desc limit 1`);
   return (rows as unknown as Pick<Mistake, "source" | "ref">[])[0] ?? null;
+}
+
+const STUDY_RANGE_COLS = `source, to_char(study_day, 'YYYY-MM-DD') as study_day, from_no, to_no`;
+
+/** 교재·학습일마다 한 줄이다. 같은 날 다시 저장하면 그 줄을 덮어쓴다. */
+export async function upsertStudyRange(range: StudyRange): Promise<StudyRange> {
+  const rows = await db().query(
+    `insert into study_ranges (source, study_day, from_no, to_no)
+     values ($1, $2::date, $3, $4)
+     on conflict (source, study_day) do update set
+       from_no = excluded.from_no, to_no = excluded.to_no, updated_at = now()
+     returning ${STUDY_RANGE_COLS}`,
+    [range.source, range.study_day, range.from_no, range.to_no],
+  );
+  return (rows as unknown as StudyRange[])[0];
+}
+
+/**
+ * 최근에 적은 풀이 범위. 입력 화면이 그날 저장된 범위를 보여 주고 다음 시작 번호를 채우는 데 쓴다.
+ *
+ * 표가 아직 없는 DB 에서는 null 을 준다. 스키마보다 코드가 먼저 올라가도 오답 입력 화면까지
+ * 죽지 않게 하려는 것이다. 그때 화면은 범위 칸만 감춘다.
+ */
+export async function fetchRecentStudyRanges(): Promise<StudyRange[] | null> {
+  try {
+    const rows = await db().query(
+      `select ${STUDY_RANGE_COLS} from study_ranges order by study_day desc, source limit 90`,
+    );
+    return rows as unknown as StudyRange[];
+  } catch (err) {
+    // 42P01 = undefined_table
+    if ((err as { code?: unknown } | null)?.code === "42P01") return null;
+    throw err;
+  }
 }

@@ -1,16 +1,22 @@
 import { MistakeForm } from "./MistakeForm";
 import { SetupNotice } from "../../SetupNotice";
-import { fetchLastMistakeRef } from "@/lib/queries";
+import { fetchLastMistakeRef, fetchRecentStudyRanges } from "@/lib/queries";
 import { getSettingsAndToday } from "@/lib/settings";
 import type { Mistake } from "@/lib/mistakes";
+import type { StudyRange } from "@/lib/study-ranges";
 
 export const dynamic = "force-dynamic";
 
 export default async function NewMistakePage() {
   let today: string;
   let last: Pick<Mistake, "source" | "ref"> | null;
+  let ranges: StudyRange[] | null;
   try {
-    [{ today }, last] = await Promise.all([getSettingsAndToday(), fetchLastMistakeRef()]);
+    [{ today }, last, ranges] = await Promise.all([
+      getSettingsAndToday(),
+      fetchLastMistakeRef(),
+      fetchRecentStudyRanges(),
+    ]);
   } catch (err) {
     return <SetupNotice message={err instanceof Error ? err.message : String(err)} />;
   }
@@ -20,6 +26,7 @@ export default async function NewMistakePage() {
       today={today}
       initialSource={last?.source ?? "master1500"}
       initialRef={last?.ref ?? ""}
+      initialRanges={ranges}
     />
   );
 }

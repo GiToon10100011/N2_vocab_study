@@ -130,3 +130,38 @@ create index if not exists mistakes_study_day on mistakes (study_day);
 create index if not exists mistakes_category  on mistakes (category);
 -- 목록 기본값이 "미해결만, 최근 입력 순". 해결된 행은 계속 쌓이므로 부분 인덱스로 뺀다
 create index if not exists mistakes_open      on mistakes (created_at desc) where resolved_at is null;
+
+-- 풀이 범위. 그날 그 교재를 몇 번부터 몇 번까지 풀었는지 적는다.
+-- 오답이 하나도 없는 날에는 mistakes 에 아무것도 남지 않아서 따로 둔다.
+-- 교재·학습일마다 한 줄이고, 같은 날 다시 적으면 덮어쓴다(오타 수정).
+create table if not exists study_ranges (
+  source      text        not null,
+  study_day   date        not null,
+  from_no     integer     not null,
+  to_no       integer     not null,
+  updated_at  timestamptz not null default now(),
+
+  primary key (source, study_day),
+  constraint study_ranges_source_valid
+    check (source in ('master1500', 'grammar', 'reading')),
+  constraint study_ranges_numbers
+    check (from_no >= 1 and to_no >= from_no and to_no <= 9999)
+);
+
+-- 범위마다 그 안에서 틀린 문항 수. 앱은 쓰지 않고 읽기 전용 조회용이다.
+-- 오답의 문항 번호(ref)는 자유 형식이라 숫자만으로 된 것만 범위와 견준다. 'Part A-3' 같은 번호는 세지 않는다.
+-- 같은 교재, 같은 학습일의 오답만 센다.
+create or replace view study_range_summary as
+select r.source,
+       r.study_day,
+       r.from_no,
+       r.to_no,
+       r.to_no - r.from_no + 1 as solved,
+       count(m.id)::int as mistakes,
+       coalesce(array_agg(m.ref order by m.ref::int) filter (where m.id is not null), '{}') as mistake_refs
+  from study_ranges r
+  left join mistakes m
+    on m.source = r.source
+   and m.study_day = r.study_day
+   and case when m.ref ~ '^[0-9]{1,4}$' then m.ref::int end between r.from_no and r.to_no
+ group by r.source, r.study_day, r.from_no, r.to_no;

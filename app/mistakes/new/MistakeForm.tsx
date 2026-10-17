@@ -462,7 +462,7 @@ export function MistakeForm({
             ref={addChoiceRef}
             type="button"
             onClick={addChoice}
-            className="rounded-lg border border-dashed border-border px-4 py-3 text-sm text-muted"
+            className="mt-2.5 rounded-lg border border-dashed border-border px-4 py-3 text-sm text-muted"
           >
             + 선택지 추가
           </button>

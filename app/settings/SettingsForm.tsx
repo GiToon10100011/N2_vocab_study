@@ -8,6 +8,7 @@ import {
   MAX_UNDO_SECONDS,
   normalizeUndoSeconds,
 } from "@/lib/grade-outbox";
+import { TEST_SIZE_MAX, TEST_SIZE_MIN } from "@/lib/typing-test";
 import { PROMPT_LABEL } from "@/lib/types";
 import type { AppSettings } from "@/lib/types";
 
@@ -179,6 +180,26 @@ export function SettingsForm({ initial }: { initial: AppSettings }) {
             max={12}
             value={s.dayStartHour}
             onChange={(e) => setS({ ...s, dayStartHour: Number(e.target.value) })}
+            className="w-24 rounded-lg border border-border bg-bg px-3 py-2 text-right tabular-nums"
+          />
+        </label>
+      </section>
+
+      <section className="mt-4 flex flex-col gap-4 rounded-xl border border-border bg-surface p-5">
+        <h2 className="text-sm font-semibold">실전 테스트</h2>
+        <label className="flex items-center justify-between gap-4">
+          <span className="text-sm">
+            실전 테스트 문제 수
+            <span className="ml-2 text-xs text-muted">
+              이틀에 한 번 뜨는 한자 → 읽기 타이핑 테스트. 한 번에 20분을 넘기지 않게 조정하세요
+            </span>
+          </span>
+          <input
+            type="number"
+            min={TEST_SIZE_MIN}
+            max={TEST_SIZE_MAX}
+            value={s.testSize}
+            onChange={(e) => setS({ ...s, testSize: Number(e.target.value) })}
             className="w-24 rounded-lg border border-border bg-bg px-3 py-2 text-right tabular-nums"
           />
         </label>

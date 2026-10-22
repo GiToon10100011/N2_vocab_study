@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { fetchSettings, saveSettings } from "../queries";
 import { normalizeUndoSeconds } from "../grade-outbox";
+import { normalizeTestSize } from "../typing-test";
 import type { AppSettings } from "../types";
 
 export async function getSettingsAction(): Promise<AppSettings> {
@@ -33,6 +34,7 @@ export async function saveSettingsAction(input: AppSettings): Promise<AppSetting
     dayStartHour: clamp(input.dayStartHour, 0, 12),
     // 0 은 "상시" 다. 숫자가 아닌 값이 0 으로 읽혀 조용히 상시가 되지 않게 따로 맞춘다.
     undoSeconds: normalizeUndoSeconds(input.undoSeconds),
+    testSize: normalizeTestSize(input.testSize),
     // 백업 시각은 백업 작업만 갱신한다. 설정 저장으로 덮어쓰지 않는다.
     lastBackupAt: input.lastBackupAt,
   };

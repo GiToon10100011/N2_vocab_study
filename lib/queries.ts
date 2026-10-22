@@ -1,4 +1,5 @@
-import { db } from "./db";
+import { db, isMissingSchema } from "./db";
+import { TEST_SIZE_DEFAULT, normalizeTestSize } from "./typing-test";
 import type { AppSettings, PromptType, StudyDayGroup, TodayCounts, Word } from "./types";
 import type { Mistake, MistakeDraft } from "./mistakes";
 import type { StudyRange } from "./study-ranges";
@@ -113,6 +114,7 @@ export async function fetchSettings(): Promise<AppSettings> {
     // DB 에 이 코드가 먼저 올라가면 앱 전체가 죽는다. 행을 jsonb 로 바꿔 꺼내면 없을 때 null 이다.
     `select new_limit, review_limit, weight_s2r, weight_s2m, weight_r2m, day_start_hour,
             coalesce((to_jsonb(s) ->> 'undo_seconds')::int, ${DEFAULT_UNDO_SECONDS}) as undo_seconds,
+            coalesce((to_jsonb(s) ->> 'test_size')::int, ${TEST_SIZE_DEFAULT}) as test_size,
             to_char(last_backup_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as last_backup_at
        from settings s where id = 1`,
   )) as Record<string, number | string | null>[];
@@ -124,6 +126,7 @@ export async function fetchSettings(): Promise<AppSettings> {
       weights: { ...DEFAULT_WEIGHTS },
       dayStartHour: DAY_START_HOUR,
       undoSeconds: DEFAULT_UNDO_SECONDS,
+      testSize: TEST_SIZE_DEFAULT,
       lastBackupAt: null,
     };
   }
@@ -134,6 +137,7 @@ export async function fetchSettings(): Promise<AppSettings> {
     weights: { s2r: num("weight_s2r"), s2m: num("weight_s2m"), r2m: num("weight_r2m") },
     dayStartHour: num("day_start_hour"),
     undoSeconds: normalizeUndoSeconds(num("undo_seconds")),
+    testSize: normalizeTestSize(num("test_size")),
     lastBackupAt: (r.last_backup_at as string | null) ?? null,
   };
 }
@@ -158,6 +162,12 @@ export async function saveSettings(s: AppSettings): Promise<void> {
       s.undoSeconds,
     ],
   );
+  // 문제 수는 따로 적는다. 열이 아직 없는 DB 에 코드가 먼저 올라가도 나머지 설정 저장은 되게 한다.
+  try {
+    await db().query(`update settings set test_size = $1 where id = 1`, [s.testSize]);
+  } catch (err) {
+    if (!isMissingSchema(err)) throw err;
+  }
 }
 
 /**

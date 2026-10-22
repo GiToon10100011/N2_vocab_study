@@ -488,6 +488,40 @@ export async function fetchTestWrongToday(
   }
 }
 
+export interface TestWordRow extends SrsRow {
+  surface: string;
+  reading: string;
+}
+
+/** 테스트 답을 서버가 다시 채점하는 데 필요한 단어 행: 표기 · 읽기 + SRS 상태. */
+export async function fetchTestWordRows(ids: string[]): Promise<TestWordRow[]> {
+  if (ids.length === 0) return [];
+  const rows = await db().query(
+    `select id, surface, reading, stage, correct_count, wrong_count, streak, last_wrong_type
+       from words where id = any($1::uuid[])`,
+    [ids],
+  );
+  return rows as unknown as TestWordRow[];
+}
+
+/**
+ * 이 테스트에서 아직 안 푼 문항의 단어 id. 답은 여기에 있는 단어에만 반영한다 —
+ * 다른 묶음 id 로 같은 답이 다시 와도(두 기기 · 응답 유실 뒤 재전송) 한 번만 반영되게 하는 열쇠다.
+ * 표가 없는 DB 에서는 오류를 그대로 던진다(호출하는 쪽이 스키마 없음으로 다룬다).
+ */
+export async function fetchUnansweredTestWordIds(
+  testDay: string,
+  ids: string[],
+): Promise<Set<string>> {
+  if (ids.length === 0) return new Set();
+  const rows = (await db().query(
+    `select word_id from typing_test_items
+      where test_day = $1::date and word_id = any($2::uuid[]) and answered_at is null`,
+    [testDay, ids],
+  )) as { word_id: string }[];
+  return new Set(rows.map((r) => r.word_id));
+}
+
 export async function fetchReviewLogsSince(since: string) {
   const rows = await db().query(
     `select word_id,

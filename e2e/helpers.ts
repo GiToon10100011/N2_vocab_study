@@ -58,6 +58,32 @@ export async function seed(
   }
 }
 
+/** n일 전의 학습일 'YYYY-MM-DD' (04:00 경계, Asia/Seoul). */
+export function daysAgo(n: number): string {
+  return new Date(Date.now() - n * 86_400_000 - 4 * 3600_000).toLocaleDateString("en-CA", {
+    timeZone: "Asia/Seoul",
+  });
+}
+
+/**
+ * 실전 테스트 대상이 되는 단어를 심는다: 이미 학습했고(stage 3, 한 달 뒤 복습) 첫 리뷰 로그가 3일 전이다.
+ * 오늘 처음 배운 단어는 테스트에서 빠지므로 로그 날짜가 오늘이면 안 된다.
+ */
+export async function seedTestable(
+  rows: { surface: string; reading: string; meaning: string }[],
+): Promise<void> {
+  await seed(rows, daysAgo(10));
+  await sql().query(
+    `update words set stage = 3, next_review = current_date + 30 where note = $1`,
+    [MARK],
+  );
+  await sql().query(
+    `insert into reviews (word_id, prompt_type, correct, reviewed_at)
+     select id, 'learn', true, now() - interval '3 days' from words where note = $1`,
+    [MARK],
+  );
+}
+
 export async function wordRow(surface: string) {
   const rows = (await sql().query(
     `select stage, to_char(next_review,'YYYY-MM-DD') as next_review,

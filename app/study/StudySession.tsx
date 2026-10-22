@@ -2,18 +2,14 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { RETRY_GAP } from "@/lib/srs";
 import { suspendWordAction, updateWordAction } from "@/lib/actions/words";
 import { hasNonKana, normalizeReading } from "@/lib/kana";
 import { OUTBOX_KEY, type UndoBuffer } from "@/lib/grade-outbox";
-import {
-  createUndoBuffer,
-  recoverBeforeSession,
-  recoveryPending,
-  releaseUndoBuffer,
-  unsentCount,
-} from "@/lib/grade-client";
+import { createUndoBuffer, releaseUndoBuffer } from "@/lib/grade-client";
+import { RecoveryNotice } from "../RecoveryNotice";
+import { useGradeRecovery } from "../useGradeRecovery";
 import { CardFace, type SessionCard } from "./CardFace";
 import type { GradeInput, PromptType, QueueCard, QueueWord } from "@/lib/types";
 
@@ -68,31 +64,7 @@ export function StudySession({
    * 지난 세션에서 서버에 가지 못한 채점이 남아 있으면 그것부터 보낸다. 방금 받은 큐는 그 채점이
    * 반영되기 전에 만들어진 것이라, 그대로 시작하면 이미 푼 카드가 다시 나오고 두 번 반영된다.
    */
-  const [recovery, setRecovery] = useState<"none" | "sending" | "failed">("none");
-  const [unsent, setUnsent] = useState(0);
-  const blockedRef = useRef(false);
-
-  const recover = useCallback(async () => {
-    blockedRef.current = true;
-    setRecovery("sending");
-    const r = await recoverBeforeSession().catch(() => null);
-    if (!r || r.failed > 0) {
-      setUnsent(r?.failed ?? unsentCount());
-      setRecovery("failed");
-    } else if (r.reload) {
-      window.location.reload(); // 채점이 반영된 큐를 새로 받는다
-    } else {
-      blockedRef.current = false;
-      setRecovery("none");
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!recoveryPending()) return;
-    // 안내 화면으로 바뀌기 전에 들어오는 입력부터 막는다.
-    blockedRef.current = true;
-    void Promise.resolve().then(recover);
-  }, [recover]);
+  const { recovery, unsent, blockedRef, recover, skip } = useGradeRecovery();
 
   useEffect(() => {
     const buffer = createUndoBuffer({
@@ -302,17 +274,15 @@ export function StudySession({
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+    // blockedRef 는 훅이 돌려주는 ref 라 린트가 안정된 값인지 모른다. 정체가 바뀌지 않으므로 리스너는 한 번만 등록된다.
+  }, [blockedRef]);
 
   if (recovery !== "none") {
     return (
       <RecoveryNotice
         failed={recovery === "failed" ? unsent : null}
         onRetry={() => void recover()}
-        onSkip={() => {
-          blockedRef.current = false;
-          setRecovery("none");
-        }}
+        onSkip={skip}
       />
     );
   }
@@ -444,55 +414,6 @@ export function StudySession({
           </span>
         </div>
       </footer>
-    </main>
-  );
-}
-
-/** 지난 세션의 채점을 서버에 반영하는 동안, 그리고 반영하지 못했을 때 카드 대신 보여준다. */
-function RecoveryNotice({
-  failed,
-  onRetry,
-  onSkip,
-}: {
-  /** 반영하지 못한 채점 수. null 이면 아직 보내는 중이다. */
-  failed: number | null;
-  onRetry: () => void;
-  onSkip: () => void;
-}) {
-  return (
-    <main className="mx-auto flex min-h-dvh max-w-2xl flex-col items-center justify-center px-6 text-center">
-      {failed === null ? (
-        <p role="status" className="text-sm text-muted">
-          지난 세션의 채점을 반영하는 중입니다…
-        </p>
-      ) : (
-        <>
-          <p className="text-lg font-semibold">
-            지난 세션의 채점 {failed}건을 아직 반영하지 못했습니다
-          </p>
-          <p className="mt-3 text-sm text-muted">
-            채점은 이 기기에 남아 있습니다. 반영하기 전에 시작하면 이미 푼 카드가 다시 나올 수
-            있습니다.
-          </p>
-          <div className="mt-8 flex gap-3">
-            <button
-              onClick={onRetry}
-              className="rounded-xl bg-accent px-6 py-3.5 font-semibold text-accent-fg"
-            >
-              다시 시도
-            </button>
-            <button
-              onClick={onSkip}
-              className="rounded-xl border border-border bg-surface px-6 py-3.5 font-semibold"
-            >
-              그대로 시작
-            </button>
-          </div>
-          <Link href="/" className="mt-6 text-sm text-muted underline underline-offset-4">
-            홈으로
-          </Link>
-        </>
-      )}
     </main>
   );
 }

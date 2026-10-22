@@ -67,7 +67,7 @@ const HAS_KANJI = /[\u3400-\u4dbf\u4e00-\u9fff々〆]/;
  * 단 nn 뒤에 모음이나 y 가 오면 ん + な행/や행 이라 그대로 두어야 한다
  * (annai -> あんない, mannaka -> まんなか).
  */
-function fromImeRomaji(romaji: string): string {
+export function fromImeRomaji(romaji: string): string {
   return romaji.replace(/nn(?![aiueoy])/g, "n");
 }
 

@@ -12,6 +12,7 @@ import {
 } from "@/lib/queries";
 import { addDays, studyDayStart } from "@/lib/srs";
 import { getSettingsAndToday } from "@/lib/settings";
+import { loadTestOverview } from "@/lib/typing-test-load";
 
 export const dynamic = "force-dynamic";
 
@@ -27,18 +28,19 @@ export default async function HomePage() {
   let today: string;
   let newLimit: number;
   let lastBackupAt: string | null;
-  let counts, week, weakTotal, days, wrongTotal;
+  let counts, week, weakTotal, days, wrongTotal, testOverview;
   try {
     const s = await getSettingsAndToday();
     today = s.today;
     newLimit = s.settings.newLimit;
     lastBackupAt = s.settings.lastBackupAt;
-    [counts, week, weakTotal, days, wrongTotal] = await Promise.all([
+    [counts, week, weakTotal, days, wrongTotal, testOverview] = await Promise.all([
       fetchTodayCounts(today),
       fetchPeriodStats(studyDayStart(addDays(today, -6)).toISOString()),
       fetchWeakTotal(),
       fetchStudyDays(today),
       fetchWrongTotal(),
+      loadTestOverview(today, s.settings),
     ]);
   } catch (err) {
     return <SetupNotice message={err instanceof Error ? err.message : String(err)} />;
@@ -113,6 +115,23 @@ export default async function HomePage() {
       )}
 
       <BackupWarning lastBackupAt={lastBackupAt} />
+
+      {/* 매일 복습과 따로 이틀에 한 번 뜨는 한자 → 읽기 타이핑 테스트. 낼 때가 아니면 카드가 없다. */}
+      {(testOverview.kind === "due" || testOverview.kind === "active") && (
+        <Link
+          href="/test"
+          className="mt-4 flex items-center gap-3 rounded-xl border border-border bg-surface px-5 py-4"
+        >
+          <span className="font-semibold">
+            실전 테스트 ·{" "}
+            {testOverview.kind === "due" ? `${testOverview.count}문제` : `남은 ${testOverview.remaining}문제`}
+          </span>
+          {/* 「시작」 이라는 말을 쓰지 않는다. 학습 시작 링크(시작 (Enter))와 이름이 겹쳐 둘을 구별하지 못한다. */}
+          <span className="ml-auto text-sm text-muted">
+            {testOverview.kind === "due" ? "한자 → 읽기 →" : "이어서 →"}
+          </span>
+        </Link>
+      )}
 
       {wrongTotal > 0 && (
         <Link

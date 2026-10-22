@@ -89,6 +89,21 @@ export interface GradeInput {
   typed?: string;
 }
 
+/** 실전 테스트의 한 문제. 읽기 · 뜻은 화면이 답을 받기 전까지 DOM 에 그리지 않는다. */
+export interface TestQuestion {
+  wordId: string;
+  surface: string;
+  reading: string;
+  meaning_ko: string;
+}
+
+/** 이미 답한 문제. 이어서 푼 테스트의 끝 화면에 전체를 보여 주려고 서버가 함께 준다. */
+export interface TestAnswered extends TestQuestion {
+  /** 그때 친 확정 가나 */
+  typed: string;
+  correct: boolean;
+}
+
 export interface PromptWeights {
   s2r: number;
   s2m: number;

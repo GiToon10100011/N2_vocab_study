@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { MARK, authenticate, resetDb, seed, seedTestable, sql, wordRow } from "./helpers";
+import { MARK, authenticate, daysAgo, resetDb, seed, seedTestable, sql, wordRow } from "./helpers";
 
 const TODAY = new Date(Date.now() - 4 * 3600_000).toLocaleDateString("en-CA", {
   timeZone: "Asia/Seoul",
@@ -349,6 +349,47 @@ test.describe("테스트 답 반영 (/api/test-answers)", () => {
       `select count(*)::int as n from reviews where test = false and prompt_type = 's2r'`,
     );
     expect(flashcardLogs).toEqual([{ n: 1 }]); // 카드 채점은 로그로 남는다
+  });
+});
+
+test.describe("읽기 주의 배지", () => {
+  test("테스트에서 틀린 뒤 두 번 연속 맞히기 전까지 플래시카드에 읽기 주의가 붙는다", async ({ page }) => {
+    await seedTestable(WORDS);
+    // 세 단어 모두 오늘 복습이 걸려 있다. 抽象的 는 테스트에서 틀려 약점 유형이 s2r 로 남은 상태다.
+    await sql().query(`update words set stage = 2, next_review = current_date where note = $1`, [MARK]);
+    await sql().query(
+      `update words set wrong_count = 1, last_wrong_type = 's2r' where surface = '抽象的' and note = $1`,
+      [MARK],
+    );
+    // 테스트 이력(오래된 것부터): 抽象的 [오답] · 環境 [오답, 정답] · 協力 [오답, 정답, 정답]
+    const history: Record<string, boolean[]> = {
+      抽象的: [false],
+      環境: [false, true],
+      協力: [false, true, true],
+    };
+    for (const [surface, results] of Object.entries(history)) {
+      for (const [i, ok] of results.entries()) {
+        const ago = 9 - i * 2; // 같은 단어의 테스트 날짜가 겹치지 않게
+        await sql().query(
+          `insert into typing_test_items (test_day, word_id, typed, correct, answered_at)
+           select $1::date, id, 'あ', $2, now() - make_interval(days => $3::int) from words where surface = $4`,
+          [daysAgo(ago), ok, ago, surface],
+        );
+      }
+    }
+
+    await page.goto("/study");
+    const badge: Record<string, boolean> = {};
+    for (let i = 0; i < 3; i++) {
+      const text = await page.locator("main").innerText();
+      const word = WORDS.find((w) => text.includes(w.surface) || text.includes(w.reading))!;
+      badge[word.surface] = text.includes("읽기 주의");
+      // 테스트에서 틀린 단어는 다음 복습에서 읽기(s2r)로 나온다 — last_wrong_type 규칙 그대로의 의도된 동작
+      if (word.surface === "抽象的") expect(text).toContain("읽기는?");
+      await page.keyboard.press("Space");
+      await page.keyboard.press("1");
+    }
+    expect(badge).toEqual({ 抽象的: true, 環境: true, 協力: false });
   });
 });
 

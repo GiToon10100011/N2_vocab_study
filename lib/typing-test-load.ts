@@ -10,6 +10,7 @@ import {
   isTestEligible,
   pickTestWords,
   testPhase,
+  testStatus,
   type LatestTest,
   type TestCandidate,
 } from "./typing-test";
@@ -152,6 +153,31 @@ export async function loadTestSession(testDay: string): Promise<TestSessionData>
       .filter((r) => r.answered)
       .map((r) => ({ ...question(r), typed: r.typed ?? "", correct: r.correct === true })),
   };
+}
+
+/**
+ * 「읽기 주의」를 달 단어. 테스트에서 틀린 뒤 아직 두 번 연속 맞히지 못한 단어(재시험 대상과 같은 조건)다.
+ * 학습 큐를 만들 때마다 부르므로 오답이 있었던 단어의 이력만 읽는다. 스키마가 아직 없으면 빈 집합이다.
+ */
+export async function readingCautionIds(): Promise<Set<string>> {
+  try {
+    const rows = (await db().query(
+      `select word_id,
+              string_agg(case when correct then '1' else '0' end, '' order by answered_at) as history
+         from typing_test_items
+        where answered_at is not null
+          and word_id in (select word_id from typing_test_items where correct = false)
+        group by word_id`,
+    )) as { word_id: string; history: string }[];
+    return new Set(
+      rows
+        .filter((r) => testStatus([...r.history].map((c) => c === "1")) === "retest")
+        .map((r) => r.word_id),
+    );
+  } catch (err) {
+    if (isMissingSchema(err)) return new Set();
+    throw err;
+  }
 }
 
 /**

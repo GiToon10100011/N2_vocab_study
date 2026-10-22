@@ -320,6 +320,10 @@ export function StudySession({
               </span>
             )}
             {card.weak && <span className="text-warn">★</span>}
+            {/* 실전 테스트에서 틀린 뒤 아직 두 번 연속 맞히지 못했다. 카드면(CardFace)은 건드리지 않는다. */}
+            {card.caution && (
+              <span className="rounded bg-warn-bg px-1.5 py-0.5 text-xs text-warn">읽기 주의</span>
+            )}
           </span>
           <span className="tabular-nums">
             {index + 1} / {total}

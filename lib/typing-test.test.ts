@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   finishedStudyDay,
   isTestEligible,
+  markCaution,
   normalizeTestSize,
   parseTestAnswers,
   pickTestWords,
@@ -215,6 +216,22 @@ describe("출현 판정", () => {
 
   it("답이 하나도 없이 끝났으면 시작한 날을 끝낸 날로 본다", () => {
     expect(finishedStudyDay(done(null, "2026-10-20"))).toBe("2026-10-20");
+  });
+});
+
+describe("읽기 주의 표시", () => {
+  it("재시험이 필요한 단어의 카드에만 표시하고 입력은 바꾸지 않는다", () => {
+    const cards = [{ word: { id: "a" } }, { word: { id: "b" } }];
+    const marked = markCaution(cards, new Set(["a"]));
+    expect(marked[0]).toEqual({ word: { id: "a" }, caution: true });
+    expect(marked[1]).toEqual({ word: { id: "b" } });
+    expect("caution" in marked[1]).toBe(false); // 표시가 없는 카드에는 키 자체가 없다
+    expect(cards[0]).toEqual({ word: { id: "a" } });
+  });
+
+  it("같은 단어의 카드는 몇 장이든 모두 표시한다 (본 카드 · 재시도 카드)", () => {
+    const cards = [{ word: { id: "a" } }, { word: { id: "a" } }, { word: { id: "b" } }];
+    expect(markCaution(cards, new Set(["a"])).map((c) => "caution" in c)).toEqual([true, true, false]);
   });
 });
 

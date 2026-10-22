@@ -68,6 +68,8 @@ export interface QueueCard {
   word: QueueWord;
   /** 취약 단어 표시용 */
   weak: boolean;
+  /** 실전 테스트에서 틀린 뒤 아직 두 번 연속 맞히지 못한 단어(「읽기 주의」). 없으면 키가 없다. */
+  caution?: boolean;
 }
 
 export interface TodayCounts {

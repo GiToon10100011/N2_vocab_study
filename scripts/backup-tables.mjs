@@ -6,6 +6,9 @@
  * 개인 메모가 들어간다. 다시 넣지 말 것 — lib/backup.test.ts 가 막는다.
  *
  * study_ranges(풀이 범위)도 같은 이유로 없다. 공개 저장소에 새 종류의 기록을 올리지 않는다.
+ *
+ * typing_test_items(실전 테스트에서 친 답)도 없다. 테스트 정오는 reviews 의 test 열로 백업된다
+ * — SRS 진도를 바꾸는 기록이라 복원에 필요하다.
  */
 export const BACKUP_TABLES = [
   { table: "words", orderBy: "created_at asc, id asc" },

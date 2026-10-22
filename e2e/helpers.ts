@@ -22,7 +22,8 @@ export function sql() {
 /** 격리 DB 를 통째로 비운다. 실제 데이터가 아니므로 안전하다. */
 export async function resetDb() {
   await sql().query(
-    `truncate reviews, words, mistakes, grade_batches, study_ranges restart identity cascade`,
+    `truncate reviews, words, mistakes, grade_batches, study_ranges, typing_test_items
+       restart identity cascade`,
   );
 }
 

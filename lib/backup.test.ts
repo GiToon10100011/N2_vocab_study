@@ -37,4 +37,16 @@ describe("자동 백업 대상", () => {
 
     expect(readFileSync(".github/workflows/backup.yml", "utf8")).not.toContain("study_ranges");
   });
+
+  // 실전 테스트에서 친 답(typing_test_items)도 같다. 정오 기록은 reviews.test 로 백업된다.
+  it("실전 테스트의 친 답은 백업하지 않고, 테스트 정오는 reviews 로 백업한다", () => {
+    const tables = BACKUP_TABLES.map((t) => t.table);
+    expect(tables).not.toContain("typing_test_items");
+    expect(tables).toContain("reviews");
+
+    const ignored = readFileSync(".gitignore", "utf8").split("\n").map((l) => l.trim());
+    expect(ignored).toContain("backups/typing_test_items.csv");
+
+    expect(readFileSync(".github/workflows/backup.yml", "utf8")).not.toContain("typing_test_items");
+  });
 });

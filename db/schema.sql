@@ -165,3 +165,29 @@ select r.source,
    and m.study_day = r.study_day
    and case when m.ref ~ '^[0-9]{1,4}$' then m.ref::int end between r.from_no and r.to_no
  group by r.source, r.study_day, r.from_no, r.to_no;
+
+-- 실전 테스트(한자를 보고 읽기를 가나로 쳐서 채점)로 낸 채점인지.
+-- prompt_type 은 's2r' 로 남긴다. 유형 enum 을 늘리지 않고 이 열로 구분한다.
+-- 홈 · 통계의 복습 수와 정답률은 이 행을 플래시카드 복습으로 세지 않는다.
+alter table reviews add column if not exists test boolean not null default false;
+
+-- 실전 테스트 문항. 시작할 때 문항마다 한 줄을 넣고, 답하면 친 답 · 정오 · 시각을 채운다.
+-- 안 푼 문항 = answered_at is null. 세 열은 함께 비거나 함께 찬다.
+-- 친 답(typed)이 들어 있으므로 공개 백업에 넣지 않는다(lib/backup.test.ts 가 막는다).
+-- 테스트 정오는 reviews(test = true)에 남아 백업된다.
+create table if not exists typing_test_items (
+  test_day    date        not null,
+  word_id     uuid        not null references words(id) on delete cascade,
+  typed       text,
+  correct     boolean,
+  answered_at timestamptz,
+  primary key (test_day, word_id),
+  constraint typing_test_items_answered
+    check ((answered_at is null) = (typed is null) and (answered_at is null) = (correct is null))
+);
+-- 단어별 테스트 이력(재시험 · 통과 · 읽기 주의)을 시간순으로 읽는다
+create index if not exists typing_test_items_word on typing_test_items (word_id, answered_at);
+
+-- 실전 테스트 한 번의 문제 수. 한 번에 20분을 넘기지 않게 사용자가 조정한다.
+alter table settings add column if not exists test_size smallint not null default 40
+  constraint settings_test_size check (test_size between 10 and 100);

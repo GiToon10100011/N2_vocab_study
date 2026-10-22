@@ -52,3 +52,5 @@ playwright-report/
 backups/mistakes.csv
 # 풀이 범위도 같은 이유로 백업하지 않는다.
 backups/study_ranges.csv
+# 실전 테스트에서 친 답도 같은 이유로 백업하지 않는다. 테스트 정오는 reviews.csv(test 열)에 있다.
+backups/typing_test_items.csv

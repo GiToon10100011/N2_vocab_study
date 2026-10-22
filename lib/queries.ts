@@ -160,6 +160,12 @@ export async function saveSettings(s: AppSettings): Promise<void> {
   );
 }
 
+/**
+ * 실전 테스트 행은 플래시카드 복습으로 세지 않는다. test 열은 이름으로 읽지 않는다 —
+ * 열이 아직 없는 DB 에 이 코드가 먼저 올라가도 홈과 통계가 죽지 않게, 행을 jsonb 로 바꿔 꺼낸다.
+ */
+const NOT_TEST = `(to_jsonb(r) ->> 'test') is distinct from 'true'`;
+
 /** 유형별 정답률. 한자->읽기가 유독 낮으면 비중을 더 올릴 근거가 된다. */
 export async function fetchTypeStats(since: string) {
   const rows = (await db().query(
@@ -167,9 +173,10 @@ export async function fetchTypeStats(since: string) {
             count(*)::int                             as total,
             count(*) filter (where correct)::int      as correct,
             count(*) filter (where practice)::int     as practice
-       from reviews
+       from reviews r
       where reviewed_at >= $1::timestamptz
         and prompt_type <> 'learn' and in_session_retry = false
+        and ${NOT_TEST}
       group by prompt_type`,
     [since],
   )) as { prompt_type: PromptType; total: number; correct: number; practice: number }[];
@@ -192,13 +199,15 @@ export async function fetchPeriodStats(
   const rows = (await db().query(
     `select
        (select count(*) from words where created_at >= $1::timestamptz) as new_count,
-       (select count(*) from reviews
+       (select count(*) from reviews r
           where reviewed_at >= $1::timestamptz
             and prompt_type <> 'learn' and in_session_retry = false
+            and ${NOT_TEST}
             ${practiceClause})                                           as review_count,
-       (select count(*) from reviews
+       (select count(*) from reviews r
           where reviewed_at >= $1::timestamptz
             and prompt_type <> 'learn' and in_session_retry = false
+            and ${NOT_TEST}
             ${practiceClause} and correct)                               as correct_count`,
     [since],
   )) as Record<string, string>[];

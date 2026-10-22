@@ -85,6 +85,8 @@ export interface GradeInput {
   correct: boolean;
   /** 같은 세션 안에서의 재시도인가. true 면 SRS 를 건드리지 않고 로그만 남긴다. */
   retry: boolean;
+  /** 실전 테스트에서 친 답(확정된 가나). 카드 채점에는 없다. 서버는 이것으로 다시 채점한다. */
+  typed?: string;
 }
 
 export interface PromptWeights {

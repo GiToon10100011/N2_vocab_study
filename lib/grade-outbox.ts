@@ -30,10 +30,14 @@ export const OUTBOX_KEY = "n2v_pending_grades";
 /** 서버는 한 요청에 500건까지만 읽는다(MAX_BATCH). 넘치는 분이 잘려 나가지 않게 끊어 보낸다. */
 const CHUNK = 200;
 
-/** 연습 여부가 묶음마다 다를 수 있으므로 묶음 단위로 보관한다. 연습과 실제 복습은 섞이지 않는다. */
+/**
+ * 연습 여부가 묶음마다 다를 수 있으므로 묶음 단위로 보관한다. 연습과 실제 복습은 섞이지 않는다.
+ * test 는 실전 테스트의 test_day('YYYY-MM-DD')다. 있으면 카드 채점이 아니라 테스트 답이다 — 다른 곳으로 간다.
+ */
 export interface OutboxBatch {
   id: string;
   practice: boolean;
+  test?: string;
   grades: GradeInput[];
 }
 
@@ -48,8 +52,38 @@ export type OutboxStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 export type SendGrades = (batch: {
   id: string;
   practice: boolean;
+  test?: string;
   grades: GradeInput[];
 }) => Promise<boolean>;
+
+const TEST_DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * 묶음이 가야 할 곳과 본문. 카드 채점은 /api/grades, 테스트 답은 /api/test-answers 다.
+ * 테스트 답은 정오를 보내지 않는다 — 서버가 친 가나로 다시 채점한다.
+ */
+export function requestFor(batch: {
+  id: string;
+  practice: boolean;
+  test?: string;
+  grades: GradeInput[];
+}): { url: string; body: unknown } {
+  if (batch.test) {
+    return {
+      url: "/api/test-answers",
+      body: {
+        batchId: batch.id,
+        testDay: batch.test,
+        answers: batch.grades.map((g) => ({ wordId: g.wordId, typed: g.typed ?? "" })),
+      },
+    };
+  }
+  // batchId 는 서버가 같은 묶음을 두 번 반영하지 않게 하는 데 쓴다.
+  return {
+    url: "/api/grades",
+    body: { grades: batch.grades, practice: batch.practice, batchId: batch.id },
+  };
+}
 
 /** 채점 건수 기준. */
 export interface Delivery {
@@ -66,12 +100,16 @@ export function readOutbox(storage: OutboxStorage): OutboxBatch[] {
   }
   if (!Array.isArray(parsed)) return [];
   const out: OutboxBatch[] = [];
-  parsed.forEach((b: Partial<OutboxBatch> | null, i) => {
+  parsed.forEach((b: (Partial<OutboxBatch> & { test?: unknown }) | null, i) => {
     if (!b || !Array.isArray(b.grades) || b.grades.length === 0) return;
+    // test 가 있는데 날짜 모양이 아니면 버린다. test 만 지우면 테스트 답이 카드 채점으로 가서 SRS 가 틀어진다.
+    // 버려도 그 문항은 서버에서 안 푼 채로 남아 다시 나온다.
+    if (b.test !== undefined && !(typeof b.test === "string" && TEST_DAY.test(b.test))) return;
     // 이전 버전이 남긴 전송 실패분에는 id 가 없다. 자리 순서로 이름을 붙여 같이 다룬다.
     out.push({
       id: typeof b.id === "string" ? b.id : `legacy:${i}`,
       practice: b.practice === true,
+      ...(typeof b.test === "string" ? { test: b.test } : {}),
       grades: b.grades,
     });
   });
@@ -96,7 +134,11 @@ export function putBatch(storage: OutboxStorage, batch: OutboxBatch): void {
 }
 
 const same = (a: GradeInput, b: GradeInput) =>
-  a.wordId === b.wordId && a.kind === b.kind && a.correct === b.correct && a.retry === b.retry;
+  a.wordId === b.wordId &&
+  a.kind === b.kind &&
+  a.correct === b.correct &&
+  a.retry === b.retry &&
+  a.typed === b.typed;
 
 /**
  * 저장소에 있는 묶음을 보낸다. skipId 는 아직 되돌릴 수 있는 열린 묶음이라 건드리지 않는다.
@@ -117,7 +159,13 @@ export async function deliverOutbox(
       const batch = readOutbox(storage).find((b) => b.id === id);
       if (!batch) break;
       const chunk = batch.grades.slice(0, CHUNK);
-      if (!(await send({ id, practice: batch.practice, grades: chunk }))) {
+      const request = {
+        id,
+        practice: batch.practice,
+        ...(batch.test ? { test: batch.test } : {}),
+        grades: chunk,
+      };
+      if (!(await send(request))) {
         result.failed += batch.grades.length;
         break;
       }
@@ -145,6 +193,8 @@ export interface UndoBufferOptions {
   /** 되돌리기 시간(초). 0 = 상시 */
   undoSeconds: number;
   practice: boolean;
+  /** 실전 테스트의 test_day. 있으면 이 창의 채점은 테스트 답이다. */
+  test?: string;
   storage: OutboxStorage;
   /**
    * 저장소에 있는 것을 보낸다. skipId 는 실행이 시작될 때 불러야 한다 — 전송이 줄을 서 있는
@@ -230,6 +280,7 @@ export class UndoBuffer {
     putBatch(this.o.storage, {
       id: this.openId,
       practice: this.o.practice,
+      ...(this.o.test ? { test: this.o.test } : {}),
       grades: this.pending,
     });
   }

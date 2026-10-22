@@ -4,7 +4,9 @@ import {
   UndoBuffer,
   deliverOutbox,
   normalizeUndoSeconds,
+  putBatch,
   readOutbox,
+  requestFor,
   type OutboxStorage,
   type SendGrades,
 } from "./grade-outbox";
@@ -32,16 +34,22 @@ function memoryStorage(initial?: unknown): OutboxStorage {
 /** 받은 것을 기록하는 가짜 서버. failing 을 켜면 전부 실패한다. */
 function fakeServer() {
   const sent: Sent[] = [];
+  /** send 가 받은 인자 전체. test 키가 있는지 없는지까지 본다. */
+  const calls: Parameters<SendGrades>[0][] = [];
   const state = { failing: false };
   const send: SendGrades = async (batch) => {
     if (state.failing) return false;
     sent.push({ practice: batch.practice, grades: [...batch.grades] });
+    calls.push({ ...batch, grades: [...batch.grades] });
     return true;
   };
-  return { sent, send, state };
+  return { sent, calls, send, state };
 }
 
-function setup(undoSeconds: number, opts: { practice?: boolean; storage?: OutboxStorage } = {}) {
+function setup(
+  undoSeconds: number,
+  opts: { practice?: boolean; storage?: OutboxStorage; test?: string } = {},
+) {
   const storage = opts.storage ?? memoryStorage();
   const server = fakeServer();
   const onClose = vi.fn();
@@ -49,6 +57,7 @@ function setup(undoSeconds: number, opts: { practice?: boolean; storage?: Outbox
   const buffer = new UndoBuffer({
     undoSeconds,
     practice: opts.practice ?? false,
+    test: opts.test,
     storage,
     deliver: (skipId) => deliverOutbox(storage, server.send, skipId()),
     onClose,
@@ -331,6 +340,87 @@ describe("백업과 복구", () => {
       storage.setItem(OUTBOX_KEY, raw);
       expect(readOutbox(storage), raw).toEqual([]);
     }
+  });
+});
+
+describe("실전 테스트 답 묶음", () => {
+  const typed = (n: number, t: string): GradeInput => ({ ...g(n), typed: t });
+  const DAY = "2026-10-22";
+
+  it("test_day 가 저장소 묶음에 남고, 상시로 두면 닫을 때만 보낸다", async () => {
+    const { buffer, storage, calls } = setup(0, { test: DAY });
+    buffer.add(typed(1, "ちゅう"));
+    expect(readOutbox(storage)).toEqual([
+      { id: "s1", practice: false, test: DAY, grades: [typed(1, "ちゅう")] },
+    ]);
+
+    await tick(60_000);
+    expect(calls).toEqual([]); // 타이머로는 보내지 않는다
+
+    await buffer.close();
+    expect(calls).toEqual([{ id: "s1", practice: false, test: DAY, grades: [typed(1, "ちゅう")] }]);
+  });
+
+  it("test_day 가 있는 묶음은 test 를 달아 보내고, 없는 묶음의 인자에는 test 키가 없다", async () => {
+    const storage = memoryStorage([
+      { id: "t", practice: false, test: DAY, grades: [typed(1, "あ")] },
+      { id: "c", practice: false, grades: [g(2)] },
+    ]);
+    const { calls, send } = fakeServer();
+    await deliverOutbox(storage, send);
+    expect(calls).toEqual([
+      { id: "t", practice: false, test: DAY, grades: [typed(1, "あ")] },
+      { id: "c", practice: false, grades: [g(2)] },
+    ]);
+    expect("test" in calls[1]).toBe(false);
+  });
+
+  it("test 값이 날짜 모양이 아닌 묶음은 버린다 — 카드 채점으로 잘못 보내지 않는다", () => {
+    const storage = memoryStorage([
+      { id: "a", practice: false, test: DAY, grades: [typed(1, "あ")] },
+      { id: "b", practice: false, test: "내일", grades: [typed(2, "い")] },
+      { id: "c", practice: false, test: 20261022, grades: [typed(3, "う")] },
+      { id: "d", practice: false, grades: [g(4)] },
+    ]);
+    expect(readOutbox(storage).map((b) => b.id)).toEqual(["a", "d"]);
+  });
+
+  it("보내는 사이 친 답이 바뀐 항목은 보낸 것으로 치지 않아 지우지 않는다", async () => {
+    const storage = memoryStorage([{ id: "t", practice: false, test: DAY, grades: [typed(1, "あ")] }]);
+    // 서버가 받는 사이 같은 문항의 답이 다른 가나로 바뀌었다 (wordId · 정오는 같다)
+    const send: SendGrades = async (batch) => {
+      putBatch(storage, { ...batch, grades: [typed(1, "い")] });
+      return true;
+    };
+    await deliverOutbox(storage, send);
+    expect(readOutbox(storage)).toEqual([
+      { id: "t", practice: false, test: DAY, grades: [typed(1, "い")] },
+    ]);
+  });
+
+  it("카드 채점은 /api/grades 로, 테스트 답은 /api/test-answers 로 보낸다", () => {
+    expect(requestFor({ id: "b1xxxxxx", practice: false, grades: [g(1)] })).toEqual({
+      url: "/api/grades",
+      body: { grades: [g(1)], practice: false, batchId: "b1xxxxxx" },
+    });
+    expect(
+      requestFor({
+        id: "b1xxxxxx",
+        practice: false,
+        test: DAY,
+        grades: [typed(1, "ちゅう"), g(2)],
+      }),
+    ).toEqual({
+      url: "/api/test-answers",
+      body: {
+        batchId: "b1xxxxxx",
+        testDay: DAY,
+        answers: [
+          { wordId: g(1).wordId, typed: "ちゅう" },
+          { wordId: g(2).wordId, typed: "" }, // typed 가 없으면 빈 문자열 — 서버가 건너뛴다
+        ],
+      },
+    });
   });
 });
 

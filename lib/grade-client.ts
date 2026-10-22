@@ -8,6 +8,7 @@ import {
   deliverOutbox,
   readOutbox,
   type Delivery,
+  requestFor,
   type OutboxStorage,
   type SendGrades,
 } from "./grade-outbox";
@@ -67,11 +68,12 @@ const send: SendGrades = async (batch) => {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), SEND_TIMEOUT_MS);
   try {
-    const res = await fetch("/api/grades", {
+    // 카드 채점은 /api/grades, 실전 테스트 답은 /api/test-answers 로 간다. 어느 쪽이든 ok 확인은 같다.
+    const { url, body } = requestFor(batch);
+    const res = await fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      // batchId 는 서버가 같은 묶음을 두 번 반영하지 않게 하는 데 쓴다.
-      body: JSON.stringify({ grades: batch.grades, practice: batch.practice, batchId: batch.id }),
+      body: JSON.stringify(body),
       signal: ctrl.signal,
     });
     if (!res.ok) return false;
@@ -140,6 +142,8 @@ function deliver(skipId?: () => string): Promise<Delivery> {
 export function createUndoBuffer(o: {
   undoSeconds: number;
   practice: boolean;
+  /** 실전 테스트의 test_day. 있으면 이 버퍼의 채점은 테스트 답이다. */
+  test?: string;
   onClose: () => void;
 }): UndoBuffer {
   sessions++;

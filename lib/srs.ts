@@ -405,7 +405,8 @@ export interface GradePlanItem {
   counters: GradeCounters | null;
   /** 복습 스케줄 갱신. 연습 퀴즈에서는 항상 null 이다. */
   schedule: GradeSchedule | null;
-  log: { promptType: CardKind; correct: boolean; retry: boolean; practice: boolean };
+  /** test 는 실전 테스트 채점일 때만 true 다(reviews.test). planGrades 는 쓰지 않는다. */
+  log: { promptType: CardKind; correct: boolean; retry: boolean; practice: boolean; test?: boolean };
 }
 
 /**
@@ -416,17 +417,21 @@ export interface GradePlanItem {
  *   복습 주기(stage / next_review)는 절대 건드리지 않지만,
  *   오답 기록(wrong_count / streak / last_wrong_type)에는 반영한다.
  *   "연습에서 계속 틀리는 단어"는 진짜로 약한 단어이므로 오답노트에 올라와야 한다.
+ *
+ * testWrongToday: 그날 실전 테스트에서 틀린 단어. 테스트 전에 열어 둔 세션의 큐에 그 단어가 남아 있다가
+ *   맞히면 테스트가 내린 주기가 그날 다시 올라간다. 그래서 SRS 채점은 로그만 남긴다(연습은 원래 주기를 안 바꾼다).
  */
 export function planGrades(
   states: Map<string, SrsState>,
   grades: GradeInput[],
   today: string,
   practice = false,
+  testWrongToday: ReadonlySet<string> = new Set(),
 ): GradePlanItem[] {
   const out: GradePlanItem[] = [];
   for (const g of grades) {
     const log = { promptType: g.kind, correct: g.correct, retry: g.retry, practice };
-    if (g.kind === "learn" || g.retry) {
+    if (g.kind === "learn" || g.retry || (!practice && testWrongToday.has(g.wordId))) {
       out.push({ wordId: g.wordId, counters: null, schedule: null, log });
       continue;
     }
@@ -441,6 +446,37 @@ export function planGrades(
       ...counters,
     });
     out.push({ wordId: g.wordId, counters, schedule, log });
+  }
+  return out;
+}
+
+/**
+ * 실전 테스트 채점. 판정(정답 여부)은 서버가 lib/reading-answer.ts 로 다시 한 결과다.
+ *
+ * 맞힘: 카운터만 갱신한다. 테스트는 읽기를 확인하는 자리라 단계를 올리지 않는다
+ *       (올리면 같은 날 플래시카드와 테스트에서 두 번 오를 수 있다).
+ * 틀림: 「몰랐음」과 같다 — stage 1, 내일. last_wrong_type = 's2r' 이라 다음 플래시카드는 읽기를 묻는다.
+ * 로그는 prompt_type 's2r' 에 test 표시를 단다(유형 enum 을 늘리지 않는다).
+ */
+export function planTestGrades(
+  states: Map<string, SrsState>,
+  answers: { wordId: string; correct: boolean }[],
+  today: string,
+): GradePlanItem[] {
+  const out: GradePlanItem[] = [];
+  for (const a of answers) {
+    const state = states.get(a.wordId);
+    if (!state) continue; // 삭제된 단어
+
+    const counters = gradeCounters(state, "s2r", a.correct);
+    const schedule = a.correct ? null : gradeSchedule(state, false, today);
+    states.set(a.wordId, { stage: schedule ? schedule.stage : state.stage, ...counters });
+    out.push({
+      wordId: a.wordId,
+      counters,
+      schedule,
+      log: { promptType: "s2r", correct: a.correct, retry: false, practice: false, test: true },
+    });
   }
   return out;
 }

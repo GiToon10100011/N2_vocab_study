@@ -12,6 +12,7 @@ import {
   isWeak,
   pickPromptType,
   planGrades,
+  planTestGrades,
   studyDate,
   studyDayStart,
 } from "./srs";
@@ -410,6 +411,77 @@ describe("연습 퀴즈 채점", () => {
       false,
     );
     expect(plan[0].schedule).toEqual({ stage: 1, next_review: addDays(TODAY, 1) });
+  });
+});
+
+describe("실전 테스트 채점", () => {
+  const base = () => state({ stage: 3, correct_count: 5, wrong_count: 1, streak: 2 });
+
+  it("맞히면 카운터만 갱신하고 복습 주기는 그대로 둔다", () => {
+    const states = new Map<string, SrsState>([["w1", base()]]);
+    const plan = planTestGrades(states, [{ wordId: "w1", correct: true }], TODAY);
+    expect(plan[0].counters).toEqual({
+      correct_count: 6,
+      wrong_count: 1,
+      streak: 3,
+      last_wrong_type: null,
+    });
+    expect(plan[0].schedule).toBeNull();
+    expect(plan[0].log).toEqual({
+      promptType: "s2r",
+      correct: true,
+      retry: false,
+      practice: false,
+      test: true,
+    });
+    expect(states.get("w1")!.stage).toBe(3);
+  });
+
+  it("틀리면 「몰랐음」과 같이 stage 1 · 내일로 내리고 약점 유형을 s2r 로 남긴다", () => {
+    const states = new Map<string, SrsState>([["w1", base()]]);
+    const plan = planTestGrades(states, [{ wordId: "w1", correct: false }], TODAY);
+    expect(plan[0].counters).toEqual({
+      correct_count: 5,
+      wrong_count: 2,
+      streak: 0,
+      last_wrong_type: "s2r",
+    });
+    expect(plan[0].schedule).toEqual({ stage: 1, next_review: addDays(TODAY, 1) });
+    expect(plan[0].log.correct).toBe(false);
+    expect(plan[0].log.test).toBe(true);
+  });
+
+  it("없는 단어는 건너뛴다", () => {
+    const plan = planTestGrades(new Map(), [{ wordId: "gone", correct: true }], TODAY);
+    expect(plan).toEqual([]);
+  });
+});
+
+describe("그날 테스트에서 틀린 단어의 카드 채점", () => {
+  const wrongToday = new Set(["w1"]);
+  const grade = (wordId: string): GradeInput => ({ wordId, kind: "s2r", correct: true, retry: false });
+
+  it("열어 둔 세션에서 맞혀도 주기와 카운터를 바꾸지 않고 로그만 남긴다", () => {
+    const states = new Map<string, SrsState>([["w1", state({ stage: 1 })]]);
+    const plan = planGrades(states, [grade("w1")], TODAY, false, wrongToday);
+    expect(plan[0].counters).toBeNull();
+    expect(plan[0].schedule).toBeNull();
+    expect(plan[0].log).toMatchObject({ promptType: "s2r", correct: true, practice: false });
+    expect(states.get("w1")!.stage).toBe(1);
+  });
+
+  it("다른 단어는 평소대로 반영한다", () => {
+    const states = new Map<string, SrsState>([["w2", state({ stage: 1 })]]);
+    const plan = planGrades(states, [grade("w2")], TODAY, false, wrongToday);
+    expect(plan[0].counters).not.toBeNull();
+    expect(plan[0].schedule).toEqual({ stage: 2, next_review: addDays(TODAY, 3) });
+  });
+
+  it("연습 퀴즈에는 가드가 없다 (원래 주기를 바꾸지 않는다)", () => {
+    const states = new Map<string, SrsState>([["w1", state({ stage: 1 })]]);
+    const plan = planGrades(states, [grade("w1")], TODAY, true, wrongToday);
+    expect(plan[0].counters).not.toBeNull();
+    expect(plan[0].schedule).toBeNull();
   });
 });
 

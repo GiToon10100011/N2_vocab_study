@@ -1,7 +1,12 @@
-import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
-import { db } from "@/lib/db";
-import { fetchSrsStates } from "@/lib/queries";
+import { db, pgCode } from "@/lib/db";
+import {
+  receiptKey,
+  receiptQueries,
+  reviewInsertQuery,
+  wordUpdateQueries,
+} from "@/lib/grade-apply";
+import { fetchSrsStates, fetchTestWrongToday } from "@/lib/queries";
 import { planGrades } from "@/lib/srs";
 import { getSettingsAndToday } from "@/lib/settings";
 import type { CardKind, GradeInput, SrsState } from "@/lib/types";
@@ -12,24 +17,11 @@ export const dynamic = "force-dynamic";
 const KINDS: CardKind[] = ["learn", "s2r", "s2m", "r2m"];
 const MAX_BATCH = 500;
 
-/** 묶음 id 로 받아 줄 모양. 그 밖의 값은 id 없는 요청으로 다룬다. */
-const BATCH_ID = /^[A-Za-z0-9._:-]{6,80}$/;
-/** 이보다 오래된 기록은 지운다. 그때까지 같은 묶음을 쥐고 있는 기기는 없다고 본다. */
-const RECEIPT_DAYS = 180;
-
-/**
- * 같은 요청을 알아보는 열쇠. 묶음 id 만으로는 부족하다. 큰 묶음은 나눠서 오고 조각마다 내용이
- * 다른데, id 만 보면 둘째 조각을 「이미 받았다」고 건너뛰어 채점을 잃는다. 내용까지 같아야 같은 요청이다.
- */
-function receiptKey(batchId: unknown, practice: boolean, grades: GradeInput[]): string | null {
-  if (typeof batchId !== "string" || !BATCH_ID.test(batchId)) return null;
-  const digest = createHash("sha256")
-    .update(JSON.stringify([practice, grades.map((g) => [g.wordId, g.kind, g.correct, g.retry])]))
-    .digest("hex");
-  return `${batchId}:${digest.slice(0, 32)}`;
-}
-
-const pgCode = (err: unknown) => (err as { code?: unknown } | null)?.code;
+/** 이 요청의 채점 내용. 열쇠가 이 모양에 의존하므로 바꾸면 안 된다(lib/grade-apply.test.ts 가 고정한다). */
+const payloadOf = (practice: boolean, grades: GradeInput[]) => [
+  practice,
+  grades.map((g) => [g.wordId, g.kind, g.correct, g.retry]),
+];
 
 function parseGrades(raw: unknown): GradeInput[] {
   if (!Array.isArray(raw)) return [];
@@ -70,7 +62,7 @@ export async function POST(req: Request) {
   if (grades.length === 0) return NextResponse.json({ ok: true, applied: 0 });
 
   const sql = db();
-  let key = receiptKey((body as { batchId?: unknown })?.batchId, practice, grades);
+  let key = receiptKey((body as { batchId?: unknown })?.batchId, payloadOf(practice, grades));
   if (key) {
     try {
       const seen = (await sql.query(`select 1 from grade_batches where id = $1`, [key])) as unknown[];
@@ -99,82 +91,28 @@ export async function POST(req: Request) {
     ]),
   );
 
-  const { today } = await getSettingsAndToday();
+  const { settings, today } = await getSettingsAndToday();
+  // 그날 실전 테스트에서 틀린 단어는 이 카드 채점으로 주기를 다시 올리지 않는다(로그만 남긴다).
+  // 연습 퀴즈는 원래 주기를 바꾸지 않으므로 묻지 않는다.
+  const testWrongToday = practice
+    ? new Set<string>()
+    : await fetchTestWrongToday(ids, today, settings.dayStartHour);
   // 삭제된 단어의 채점은 버린다(리뷰 로그 FK 위반 방지).
   const plan = planGrades(
     states,
     grades.filter((g) => known.has(g.wordId)),
     today,
     practice,
+    testWrongToday,
   );
   if (plan.length === 0) return NextResponse.json({ ok: true, applied: 0 });
 
-  const queries = [];
-
-  if (key) {
-    // 채점과 한 트랜잭션에 넣는다. 반영이 실패하면 이 기록도 함께 취소되어, 다시 보냈을 때 반영된다.
-    // 따로 먼저 적어 두면 반영에 실패한 묶음이 「이미 받았다」로 건너뛰어져 채점이 사라진다.
-    queries.push(sql.query(`insert into grade_batches (id) values ($1)`, [key]));
-    queries.push(
-      sql.query(`delete from grade_batches where applied_at < now() - make_interval(days => $1)`, [
-        RECEIPT_DAYS,
-      ]),
-    );
-  }
-
-  for (const item of plan) {
-    if (!item.counters) continue;
-    const c = item.counters;
-    if (item.schedule) {
-      queries.push(
-        sql.query(
-          `update words
-              set stage = $1, next_review = $2::date, correct_count = $3,
-                  wrong_count = $4, streak = $5, last_wrong_type = $6, last_reviewed = now()
-            where id = $7`,
-          [
-            item.schedule.stage,
-            item.schedule.next_review,
-            c.correct_count,
-            c.wrong_count,
-            c.streak,
-            c.last_wrong_type,
-            item.wordId,
-          ],
-        ),
-      );
-    } else {
-      // 연습 퀴즈: 오답 기록만 남기고 복습 주기(stage / next_review)는 손대지 않는다.
-      queries.push(
-        sql.query(
-          `update words
-              set correct_count = $1, wrong_count = $2, streak = $3, last_wrong_type = $4
-            where id = $5`,
-          [c.correct_count, c.wrong_count, c.streak, c.last_wrong_type, item.wordId],
-        ),
-      );
-    }
-  }
-
-  const logParams: unknown[] = [];
-  const logRows = plan.map((item, i) => {
-    const base = i * 5;
-    logParams.push(
-      item.wordId,
-      item.log.promptType,
-      item.log.correct,
-      item.log.retry,
-      item.log.practice,
-    );
-    return `($${base + 1}::uuid, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5})`;
-  });
-  queries.push(
-    sql.query(
-      `insert into reviews (word_id, prompt_type, correct, in_session_retry, practice)
-       values ${logRows.join(", ")}`,
-      logParams,
-    ),
-  );
+  // 영수증은 채점과 한 트랜잭션에 넣는다(lib/grade-apply.ts).
+  const queries = [
+    ...(key ? receiptQueries(sql, key) : []),
+    ...wordUpdateQueries(sql, plan),
+    reviewInsertQuery(sql, plan),
+  ];
 
   try {
     await sql.transaction(queries);

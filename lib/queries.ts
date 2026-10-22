@@ -5,6 +5,7 @@ import type { Mistake, MistakeDraft } from "./mistakes";
 import type { StudyRange } from "./study-ranges";
 import { DEFAULT_UNDO_SECONDS, normalizeUndoSeconds } from "./grade-outbox";
 import {
+  APP_TIMEZONE,
   DAY_START_HOUR,
   DEFAULT_NEW_LIMIT,
   DEFAULT_REVIEW_LIMIT,
@@ -12,7 +13,9 @@ import {
   MAX_NEW_IN_QUEUE,
   WEAK_STREAK_MAX,
   WEAK_WRONG_THRESHOLD,
+  addDays,
   diffDays,
+  studyDayStart,
 } from "./srs";
 
 /**
@@ -455,6 +458,34 @@ export async function fetchSrsStates(ids: string[]): Promise<SrsRow[]> {
     [ids],
   );
   return rows as unknown as SrsRow[];
+}
+
+/**
+ * 그날(학습일 today) 실전 테스트에서 틀린 단어. 카드 채점이 이 단어의 주기를 다시 올리지 않게 하는 데 쓴다
+ * (planGrades 의 testWrongToday). 표가 아직 없는 DB 에서는 빈 집합이다 — 카드 채점은 예전처럼 돈다.
+ */
+export async function fetchTestWrongToday(
+  ids: string[],
+  today: string,
+  dayStartHour: number,
+): Promise<Set<string>> {
+  if (ids.length === 0) return new Set();
+  try {
+    const rows = (await db().query(
+      `select word_id from typing_test_items
+        where word_id = any($1::uuid[]) and correct = false
+          and answered_at >= $2::timestamptz and answered_at < $3::timestamptz`,
+      [
+        ids,
+        studyDayStart(today, APP_TIMEZONE, dayStartHour).toISOString(),
+        studyDayStart(addDays(today, 1), APP_TIMEZONE, dayStartHour).toISOString(),
+      ],
+    )) as { word_id: string }[];
+    return new Set(rows.map((r) => r.word_id));
+  } catch (err) {
+    if (isMissingSchema(err)) return new Set();
+    throw err;
+  }
 }
 
 export async function fetchReviewLogsSince(since: string) {

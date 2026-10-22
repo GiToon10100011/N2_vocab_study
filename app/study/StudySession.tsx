@@ -262,6 +262,12 @@ export function StudySession({
           e.preventDefault();
           handlers.current.undo();
           break;
+        case "Backspace":
+          // U 와 같다. 꾹 누르면 keydown 이 반복되므로 한 번에 한 장만 되돌린다.
+          // 입력칸에서 글자를 지우는 Backspace 는 위의 INPUT / TEXTAREA 분기에서 이미 빠진다.
+          e.preventDefault();
+          if (!e.repeat) handlers.current.undo();
+          break;
         case "s":
           e.preventDefault();
           handlers.current.suspend();
@@ -405,7 +411,7 @@ export function StudySession({
           </button>
           <span className="flex gap-4">
             <button onClick={onUndo} disabled={!canUndo} className="underline underline-offset-4 disabled:opacity-30">
-              되돌리기 (U)
+              되돌리기 (U · Backspace)
             </button>
             <button onClick={() => setEditing(true)} className="underline underline-offset-4">
               수정 (E)

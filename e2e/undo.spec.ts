@@ -124,6 +124,58 @@ test.describe("되돌리기 시간", () => {
   });
 });
 
+test.describe("Backspace 로 되돌리기", () => {
+  test.beforeEach(async ({ page }) => {
+    await seedDue(4);
+    await page.goto("/study");
+  });
+
+  test("Backspace 는 U 처럼 한 장씩 되돌리고, 더 되돌릴 것이 없으면 아무 일도 없다", async ({ page }) => {
+    await gradeCorrect(page, 2);
+    await expect(counter(page)).toHaveText("3 / 4");
+
+    await page.keyboard.press("Backspace");
+    await expect(counter(page)).toHaveText("2 / 4");
+    await page.keyboard.press("Backspace");
+    await expect(counter(page)).toHaveText("1 / 4");
+    await expect(undoButton(page)).toBeDisabled();
+
+    await page.keyboard.press("Backspace"); // 더 되돌릴 것이 없다
+    await expect(counter(page)).toHaveText("1 / 4");
+  });
+
+  test("꾹 눌러 반복되어도 한 장만 되돌린다", async ({ page }) => {
+    await gradeCorrect(page, 3);
+    await expect(counter(page)).toHaveText("4 / 4");
+
+    // 이미 눌린 키에 down 을 거듭하면 repeat 가 붙은 keydown 이 간다(키를 누르고 있을 때와 같다)
+    await page.keyboard.down("Backspace");
+    await page.keyboard.down("Backspace");
+    await page.keyboard.down("Backspace");
+    await page.keyboard.up("Backspace");
+    await expect(counter(page)).toHaveText("3 / 4");
+  });
+
+  test("수정 창의 입력칸에서 글자를 지우는 Backspace 는 되돌리지 않는다", async ({ page }) => {
+    await gradeCorrect(page, 1);
+    await expect(counter(page)).toHaveText("2 / 4");
+
+    await page.keyboard.press("e"); // 이 단어 수정
+    const surface = page.getByRole("textbox").first();
+    await expect(surface).toBeFocused();
+    await surface.press("End");
+    const before = await surface.inputValue();
+    await surface.press("Backspace");
+
+    await expect(surface).toHaveValue(before.slice(0, -1)); // 글자는 지워졌고
+    await expect(counter(page)).toHaveText("2 / 4"); // 채점은 그대로다
+  });
+
+  test("되돌리기 버튼이 Backspace 를 알려 준다", async ({ page }) => {
+    await expect(page.getByRole("button", { name: /되돌리기.*Backspace/ })).toBeVisible();
+  });
+});
+
 test.describe("채점 복구", () => {
   test.beforeEach(async ({ page }) => {
     await setUndoSeconds(0);

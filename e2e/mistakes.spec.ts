@@ -193,6 +193,9 @@ async function rangeRows() {
   )) as Record<string, unknown>[];
 }
 
+/** 오답과 범위를 한 번에 저장하는 버튼. 「범위 저장」은 없다. */
+const saveButton = (page: Page) => page.getByRole("button", { name: "저장", exact: true });
+
 test.describe("풀이 범위", () => {
   test("오답이 없어도 범위만 저장되고, 같은 날 다시 저장하면 그 줄을 고쳐 쓴다", async ({
     page,
@@ -201,12 +204,14 @@ test.describe("풀이 범위", () => {
     await page.goto("/mistakes/new");
     const from = page.getByLabel("시작 번호");
     const to = page.getByLabel("끝 번호");
-    const saveRange = page.getByRole("button", { name: "범위 저장" });
+    const save = saveButton(page);
 
+    // 저장 길은 하나다. 「범위 저장」 버튼은 없다.
+    await expect(page.getByRole("button", { name: "범위 저장" })).toHaveCount(0);
     // 폰에서 숫자 자판이 뜨고, 버튼은 손가락으로 누를 만한 크기다.
     await expect(from).toHaveAttribute("inputmode", "numeric");
     await expect(to).toHaveAttribute("inputmode", "numeric");
-    expect((await saveRange.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    expect((await save.boundingBox())!.height).toBeGreaterThanOrEqual(44);
     await expect(page.getByText("오늘 저장된 범위가 없습니다")).toBeVisible();
 
     await from.fill("11");
@@ -223,7 +228,7 @@ test.describe("풀이 범위", () => {
 
     // 끝 번호를 잘못 적었다. 다시 저장하면 줄이 늘지 않고 고쳐진다.
     await to.fill("21");
-    await saveRange.click();
+    await save.click();
     await expect(page.getByText("오늘 저장된 범위 · 마스터1500 11~21번 (11문항)")).toBeVisible();
     expect(await rangeRows()).toEqual([
       { source: "master1500", study_day: TODAY, from_no: 11, to_no: 21 },
@@ -231,7 +236,7 @@ test.describe("풀이 범위", () => {
 
     // 거꾸로 적으면 저장하지 않는다.
     await to.fill("5");
-    await saveRange.click();
+    await save.click();
     await expect(page.getByText("끝 번호가 시작 번호보다 앞입니다.")).toBeVisible();
     expect(await rangeRows()).toEqual([
       { source: "master1500", study_day: TODAY, from_no: 11, to_no: 21 },
@@ -316,5 +321,267 @@ test.describe("풀이 범위", () => {
         mistake_refs: ["13", "17"],
       },
     ]);
+  });
+});
+
+/** 오답 칸을 채운다. 분류까지 골라야 저장된다. */
+async function fillMistake(page: Page, ref: string, category = "회상 실패") {
+  await page.getByLabel("문항 번호").fill(ref);
+  await page.getByLabel("분류").selectOption(category);
+}
+
+/**
+ * 서버 액션 요청을 세고, 원하면 끊는다. 오답 저장의 본문에는 "category" 가, 범위 저장의 본문에는
+ * "from" 이 있다. 저장 버튼 하나가 두 요청 중 무엇을 보냈는지는 화면으로는 알 수 없어서 요청으로 센다.
+ */
+async function watchActions(page: Page) {
+  const seen = { range: 0, mistake: 0 };
+  const block = { range: false, mistake: false };
+  await page.route(/\/mistakes\/new/, async (route) => {
+    const req = route.request();
+    const body = req.method() === "POST" ? (req.postData() ?? "") : "";
+    const kind = body.includes('"from"') ? "range" : body.includes('"category"') ? "mistake" : null;
+    if (!kind) return route.continue();
+    seen[kind]++;
+    return block[kind] ? route.abort() : route.continue();
+  });
+  return { seen, block };
+}
+
+test.describe("저장 버튼 하나", () => {
+  const from = (page: Page) => page.getByLabel("시작 번호");
+  const to = (page: Page) => page.getByLabel("끝 번호");
+  const status = (page: Page) => page.getByRole("status");
+  const skipped = (page: Page, which: "시작 번호" | "끝 번호") =>
+    page.getByText(`범위는 저장하지 않았습니다 (${which} 없음)`);
+  const todayRange = (page: Page, text: string) => page.getByText(`오늘 저장된 범위 · ${text}`);
+
+  test("오답이 채워지고 범위가 둘 다 채워지면 오답과 범위를 모두 저장한다", async ({ page }) => {
+    await page.goto("/mistakes/new");
+    await fillMistake(page, "13");
+    await from(page).fill("11");
+    await to(page).fill("20");
+    await saveButton(page).click();
+
+    await expect(status(page)).toContainText("저장했습니다 · 마스터1500 13 · 회상 실패");
+    await expect(todayRange(page, "마스터1500 11~20번 (10문항)")).toBeVisible();
+    await expect(page.getByText(/범위는 저장하지 않았습니다/)).toHaveCount(0);
+    expect((await mistakeRows()).map((r) => r.ref)).toEqual(["13"]);
+    expect(await rangeRows()).toEqual([
+      { source: "master1500", study_day: TODAY, from_no: 11, to_no: 20 },
+    ]);
+  });
+
+  test("오답이 채워지고 번호가 덜 찼으면 오답만 저장하고 이유를 한 줄로 알린다 — 막지 않는다", async ({
+    page,
+  }) => {
+    await page.goto("/mistakes/new");
+
+    // 시작 번호가 없다.
+    await fillMistake(page, "13");
+    await to(page).fill("20");
+    await saveButton(page).click();
+    await expect(status(page)).toContainText("저장했습니다 · 마스터1500 13");
+    await expect(skipped(page, "시작 번호")).toBeVisible();
+    await expect(saveButton(page)).toBeEnabled(); // 저장이 끝난 뒤에 DB 를 본다
+    expect(await rangeRows()).toEqual([]);
+
+    // 끝 번호가 없다. 이유가 바뀐다. 풀면서 하나씩 적을 때 모르는 끝 번호로 덮어쓰지 않으려는 것이다.
+    await fillMistake(page, "14");
+    await from(page).fill("11");
+    await to(page).fill("");
+    await saveButton(page).click();
+    await expect(status(page)).toContainText("저장했습니다 · 마스터1500 14");
+    await expect(skipped(page, "끝 번호")).toBeVisible();
+    await expect(skipped(page, "시작 번호")).toHaveCount(0);
+    await expect(saveButton(page)).toBeEnabled();
+    expect(await rangeRows()).toEqual([]);
+
+    // 끝 번호를 채우면 안내는 사라지고 범위도 저장된다.
+    await fillMistake(page, "15");
+    await to(page).fill("20");
+    await saveButton(page).click();
+    await expect(status(page)).toContainText("저장했습니다 · 마스터1500 15");
+    await expect(page.getByText(/범위는 저장하지 않았습니다/)).toHaveCount(0);
+    // 오답이 먼저 저장되고 범위가 뒤따른다. 범위가 저장된 것을 화면에서 본 뒤에 DB 를 본다.
+    await expect(todayRange(page, "마스터1500 11~20번 (10문항)")).toBeVisible();
+    expect((await mistakeRows()).map((r) => r.ref)).toEqual(["13", "14", "15"]);
+    expect(await rangeRows()).toEqual([
+      { source: "master1500", study_day: TODAY, from_no: 11, to_no: 20 },
+    ]);
+  });
+
+  test("오답이 비고 범위가 둘 다 채워지면 범위만 저장한다 — 이어받은 문항 번호가 남아 있어도", async ({
+    page,
+  }) => {
+    await page.goto("/mistakes/new");
+    // 오답을 하나 적으면 다음 칸에 문항 번호가 이어받아 채워진다. 화면을 다시 열어도 그렇다.
+    await fillMistake(page, "13");
+    await saveButton(page).click();
+    await expect(status(page)).toContainText("저장했습니다 · 마스터1500 13");
+    await expect(page.getByLabel("문항 번호")).toHaveValue("13");
+
+    // 번호만 남았고 분류도 안 골랐다. 오답을 적는 중이 아니라 범위를 적는 중이다.
+    await from(page).fill("11");
+    await to(page).fill("20");
+    await saveButton(page).click();
+    await expect(todayRange(page, "마스터1500 11~20번 (10문항)")).toBeVisible();
+    await expect(page.getByText("분류를 골라주세요.")).toHaveCount(0);
+    expect((await mistakeRows()).map((r) => r.ref)).toEqual(["13"]);
+    expect(await rangeRows()).toEqual([
+      { source: "master1500", study_day: TODAY, from_no: 11, to_no: 20 },
+    ]);
+  });
+
+  test("오답도 범위도 비었으면 아무것도 저장하지 않고 예전처럼 빈 칸을 알린다", async ({ page }) => {
+    await page.goto("/mistakes/new");
+    await saveButton(page).click();
+    await expect(page.getByText("분류를 골라주세요.")).toBeVisible();
+
+    // 분류만 골랐다면 오답을 적으려는 것이다. 적은 것이 없다고 알린다.
+    await page.getByLabel("분류").selectOption("회상 실패");
+    await saveButton(page).click();
+    await expect(page.getByText("문항 번호나 내용을 한 칸 이상 적어주세요.")).toBeVisible();
+
+    expect(await mistakeRows()).toEqual([]);
+    expect(await rangeRows()).toEqual([]);
+  });
+
+  test("오답이 저장되지 않으면 범위도 보내지 않고, 범위가 틀려도 오답은 저장한다", async ({
+    page,
+  }) => {
+    await page.goto("/mistakes/new");
+    // 분류를 안 골랐다.
+    await page.getByLabel("문항 번호").fill("13");
+    await from(page).fill("11");
+    await to(page).fill("20");
+    await saveButton(page).click();
+    await expect(page.getByText("분류를 골라주세요.")).toBeVisible();
+    expect(await mistakeRows()).toEqual([]);
+    expect(await rangeRows()).toEqual([]);
+
+    await page.getByLabel("분류").selectOption("회상 실패");
+    await saveButton(page).click();
+    await expect(status(page)).toContainText("저장했습니다 · 마스터1500 13");
+    await expect(todayRange(page, "마스터1500 11~20번 (10문항)")).toBeVisible();
+    expect(await rangeRows()).toHaveLength(1);
+
+    // 범위를 거꾸로 적었다. 오답은 저장되고, 범위는 따로 알린다.
+    await fillMistake(page, "14");
+    await from(page).fill("20");
+    await to(page).fill("11");
+    await saveButton(page).click();
+    await expect(status(page)).toContainText("저장했습니다 · 마스터1500 14");
+    await expect(page.getByText("끝 번호가 시작 번호보다 앞입니다.")).toBeVisible();
+    await expect(saveButton(page)).toBeEnabled();
+    expect((await mistakeRows()).map((r) => r.ref)).toEqual(["13", "14"]);
+    expect(await rangeRows()).toEqual([
+      { source: "master1500", study_day: TODAY, from_no: 11, to_no: 20 },
+    ]);
+  });
+
+  test("한쪽만 실패하면 어느 쪽인지 따로 보이고, 성공한 쪽은 다시 보내지 않는다", async ({
+    page,
+  }) => {
+    const act = await watchActions(page);
+    await page.goto("/mistakes/new");
+
+    // 범위 쪽만 실패한다. 오답은 저장되고 범위 칸 아래에 따로 알린다.
+    act.block.range = true;
+    await fillMistake(page, "13");
+    await from(page).fill("11");
+    await to(page).fill("20");
+    await saveButton(page).click();
+    await expect(status(page)).toContainText("저장했습니다 · 마스터1500 13");
+    await expect(page.getByText("범위 저장에 실패했습니다. 네트워크를 확인해주세요.")).toBeVisible();
+    await expect(page.getByText("오답 저장에 실패했습니다.")).toHaveCount(0);
+    expect((await mistakeRows()).map((r) => r.ref)).toEqual(["13"]);
+    expect(await rangeRows()).toEqual([]);
+
+    // 다시 누르면 저장된 오답은 다시 보내지 않고(칸이 비워졌다) 범위만 보낸다.
+    act.block.range = false;
+    await saveButton(page).click();
+    await expect(todayRange(page, "마스터1500 11~20번 (10문항)")).toBeVisible();
+    await expect(page.getByText("범위 저장에 실패했습니다.")).toHaveCount(0);
+    expect((await mistakeRows()).map((r) => r.ref)).toEqual(["13"]);
+    expect(act.seen).toEqual({ mistake: 1, range: 2 });
+
+    // 오답 쪽만 실패한다. 오답이 저장되지 않았으니 범위도 보내지 않는다.
+    act.block.mistake = true;
+    await fillMistake(page, "14");
+    await to(page).fill("21");
+    await saveButton(page).click();
+    await expect(page.getByText("오답 저장에 실패했습니다. 네트워크를 확인해주세요.")).toBeVisible();
+    await expect(saveButton(page)).toBeEnabled();
+    expect(act.seen.range).toBe(2);
+    expect((await mistakeRows()).map((r) => r.ref)).toEqual(["13"]);
+
+    act.block.mistake = false;
+    await saveButton(page).click();
+    await expect(status(page)).toContainText("저장했습니다 · 마스터1500 14");
+    await expect(todayRange(page, "마스터1500 11~21번 (11문항)")).toBeVisible();
+    expect((await mistakeRows()).map((r) => r.ref)).toEqual(["13", "14"]);
+  });
+
+  test("이미 저장된 같은 범위는 오답을 적을 때마다 다시 보내지 않는다", async ({ page }) => {
+    const act = await watchActions(page);
+    await page.goto("/mistakes/new");
+
+    await fillMistake(page, "13");
+    await from(page).fill("11");
+    await to(page).fill("20");
+    await saveButton(page).click();
+    await expect(status(page)).toContainText("저장했습니다 · 마스터1500 13");
+    await expect(saveButton(page)).toBeEnabled();
+    expect(act.seen).toEqual({ mistake: 1, range: 1 });
+
+    // 범위 칸에는 저장한 값이 그대로 남아 있다. 같은 값이니 오답만 보낸다.
+    await fillMistake(page, "14");
+    await saveButton(page).click();
+    await expect(status(page)).toContainText("저장했습니다 · 마스터1500 14");
+    await expect(saveButton(page)).toBeEnabled();
+    expect(act.seen).toEqual({ mistake: 2, range: 1 });
+
+    // 범위를 고치면 다시 보낸다.
+    await fillMistake(page, "15");
+    await to(page).fill("21");
+    await saveButton(page).click();
+    await expect(status(page)).toContainText("저장했습니다 · 마스터1500 15");
+    await expect(saveButton(page)).toBeEnabled();
+    expect(act.seen).toEqual({ mistake: 3, range: 2 });
+    expect(await rangeRows()).toEqual([
+      { source: "master1500", study_day: TODAY, from_no: 11, to_no: 21 },
+    ]);
+  });
+});
+
+/** 이름이 바뀐 표만 되돌린다. 앞선 실행이 도중에 죽어 남긴 찌꺼기도 치운다. */
+async function restoreRangesTable() {
+  await sql().query(
+    `do $$ begin
+       if to_regclass('public.study_ranges_off') is not null then
+         alter table study_ranges_off rename to study_ranges;
+       end if;
+     end $$`,
+  );
+}
+
+test.describe("풀이 범위 표가 아직 없는 DB", () => {
+  // 최상위 beforeEach(resetDb)가 이 표를 비우므로, 그보다 먼저 찌꺼기를 치운다.
+  test.beforeAll(restoreRangesTable);
+  test.afterEach(restoreRangesTable);
+
+  test("범위 칸은 없고, 저장 버튼은 오답을 그대로 저장한다", async ({ page }) => {
+    // 스키마보다 코드가 먼저 올라간 상태. 쓰고 있는 오답 입력 화면이 죽지 않아야 한다.
+    await sql().query(`alter table study_ranges rename to study_ranges_off`);
+    await page.goto("/mistakes/new");
+    await expect(page.getByRole("heading", { name: "오답 기록" })).toBeVisible();
+    await expect(page.getByLabel("시작 번호")).toHaveCount(0);
+    await expect(page.getByText(/푼 범위/)).toHaveCount(0);
+
+    await fillMistake(page, "13");
+    await saveButton(page).click();
+    await expect(page.getByRole("status")).toContainText("저장했습니다 · 마스터1500 13 · 회상 실패");
+    expect((await mistakeRows()).map((r) => r.ref)).toEqual(["13"]);
   });
 });

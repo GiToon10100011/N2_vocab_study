@@ -108,12 +108,17 @@ export function splitChoices(question: string | null | undefined): string[] {
  * 오답 칸이 비었는가. 문항 번호와 내용 칸(선택지 · 고른 답 · 정답 · 이유)이 모두 공백이면 비었다.
  * 분류와 출처는 내용이 아니다 — validateMistake 가 empty 로 막는 것과 같은 기준이다.
  * 저장 버튼 하나가 「오답을 저장할지, 범위만 저장할지」 가를 때 쓴다.
+ *
+ * 폼은 문항 번호를 직전 오답에서 이어받아 채워 둔다(같은 회차를 이어 적으므로). 번호만 남은 폼을
+ * 채워졌다고 하면 범위만 저장하려는 때가 없어지므로, 이어받은 번호(carriedRef) 그대로인 번호는 내용으로 세지 않는다.
  */
 export function isBlankMistake(
   input: Pick<MistakeInput, "ref" | "question" | "chosen" | "answer" | "why">,
+  carriedRef?: string,
 ): boolean {
+  const ref = text(input.ref);
   return (
-    text(input.ref) === null &&
+    (ref === null || ref === text(carriedRef)) &&
     (joinChoices(splitChoices(text(input.question))) || null) === null &&
     text(input.chosen) === null &&
     text(input.answer) === null &&

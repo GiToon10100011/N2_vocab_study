@@ -199,6 +199,18 @@ describe("오답 칸이 비었는가", () => {
     }
   });
 
+  it("이어받은 문항 번호 그대로면 아직 안 적은 것이다 — 번호는 직전 오답에서 채워져 있다", () => {
+    expect(isBlankMistake({ ...blank, ref: "19" }, "19")).toBe(true);
+    expect(isBlankMistake({ ...blank, ref: " 19 " }, "19")).toBe(true);
+  });
+
+  it("번호를 고쳤거나 다른 칸이 적혀 있으면 이어받은 번호가 있어도 채워졌다", () => {
+    expect(isBlankMistake({ ...blank, ref: "20" }, "19")).toBe(false);
+    expect(isBlankMistake({ ...blank, ref: "19", why: "x" }, "19")).toBe(false);
+    // 이어받은 번호를 알려 주지 않으면 번호도 내용이다.
+    expect(isBlankMistake({ ...blank, ref: "19" })).toBe(false);
+  });
+
   it("validateMistake 가 empty 라고 하는 것과 어긋나지 않는다", () => {
     // 분류를 골라 둔 채 모든 내용 칸이 비면 저장 검증은 empty 로 막는다. 같은 입력은 비었다고 답해야 한다.
     expect(validateMistake({ ...base, ref: "", question: "", chosen: "", answer: "", why: "" })).toEqual({

@@ -110,6 +110,16 @@ export async function POST(req: Request) {
           [testDay, item.wordId, j.kana, j.correct],
         );
       }),
+      // 이 트랜잭션이 문항을 전부 풀린 것으로 바꿨는지 센다. 위의 「안 푼 문항」 조회는 트랜잭션 밖이라, 다른 묶음 id 로
+      // 같은 답이 동시에 오면 둘 다 문항을 열린 것으로 읽는다. 늦은 쪽의 문항 update 는 0행이지만 아래의 단어 갱신과
+      // 로그 insert 는 조건이 없어 그대로 들어간다. 같은 트랜잭션 안의 now() 는 고정이라, 먼저 커밋한 쪽이 적은
+      // answered_at 은 이 값과 달라 개수가 어긋나고 0 으로 나눠져(22012) 트랜잭션 전체가 취소된다.
+      sql.query(
+        `select 1 / (case when count(*) = $3::int then 1 else 0 end) as applied
+           from typing_test_items
+          where test_day = $1::date and word_id = any($2::uuid[]) and answered_at = now()`,
+        [testDay, plan.map((item) => item.wordId), plan.length],
+      ),
       ...wordUpdateQueries(sql, plan),
       reviewInsertQuery(sql, plan, { test: true }),
     ];
@@ -120,6 +130,11 @@ export async function POST(req: Request) {
       // 같은 요청이 겹쳐 들어와 다른 쪽이 먼저 반영했다. 기본 키가 겹쳐 이쪽은 전부 취소됐다.
       if (key && pgCode(err) === "23505") {
         return NextResponse.json({ ok: true, applied: 0, duplicate: true });
+      }
+      // 다른 묶음 id 의 같은 답이 먼저 반영됐다(위의 22012). 이쪽은 전부 취소됐다. 409 로 답해 클라이언트가
+      // 묶음을 지우지 않게 한다 — 다시 보내면 그 문항은 이미 풀려 있어 건너뛰고, 겹치지 않은 문항만 반영된다.
+      if (pgCode(err) === "22012") {
+        return NextResponse.json({ ok: false, error: "conflict" }, { status: 409 });
       }
       throw err;
     }

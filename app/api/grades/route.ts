@@ -31,6 +31,10 @@ function parseGrades(raw: unknown): GradeInput[] {
     const g = item as Record<string, unknown>;
     if (typeof g.wordId !== "string" || g.wordId.length < 10) continue;
     if (!KINDS.includes(g.kind as CardKind)) continue;
+    // typed 는 실전 테스트 답에만 있다. 카드 채점으로 들어오면 버린다 — 배포 전부터 열려 있던 옛 화면이나
+    // 롤백된 화면은 저장소의 test 표시를 버리고 테스트 답을 여기로 보낸다. 반영하면 맞힌 단어의 단계가
+    // 오르고 서버 재채점도 건너뛴다. 버려도 그 문항은 안 푼 채로 남아 다시 나온다(진도는 오염되지 않는다).
+    if (g.typed !== undefined) continue;
     out.push({
       wordId: g.wordId,
       kind: g.kind as CardKind,

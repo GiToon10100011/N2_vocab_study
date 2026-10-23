@@ -332,6 +332,50 @@ test.describe("테스트 답 반영 (/api/test-answers)", () => {
     await ctx.close();
   });
 
+  test("옛 화면이 테스트 답을 카드 채점 쪽으로 보내도 반영하지 않는다 (typed 가 붙은 항목)", async ({ page }) => {
+    // 배포 전부터 열려 있던 옛 탭은 저장소의 test 표시를 버리고 테스트 답을 /api/grades 로 보낸다.
+    // 서버가 막지 않으면 맞힌 단어의 단계가 한 칸 오르고 서버 재채점도 건너뛴다.
+    const id = await wordId("環境");
+    const before = await wordRow("環境");
+    const res = await page.request.post("/api/grades", {
+      data: {
+        batchId: "zz-stale-0001",
+        grades: [{ wordId: id, kind: "s2r", correct: true, retry: false, typed: "かんきょう" }],
+      },
+    });
+    expect(await res.json()).toEqual({ ok: true, applied: 0 });
+    expect(await wordRow("環境")).toEqual(before); // stage 3 · 카운터 그대로
+    expect(await reviewCount()).toBe(0);
+  });
+
+  test("같은 답이 다른 묶음 id 로 동시에 와도 한 번만 반영되고, 진 쪽이 다시 보내면 건너뛴다", async ({
+    page,
+  }) => {
+    const answers = [
+      { wordId: await wordId("抽象的"), typed: "ちゅうそうてき" },
+      { wordId: await wordId("環境"), typed: "かんきょう" },
+    ];
+    const batches = ["a", "b", "c", "d", "e"].map((s) => `zz-race-000${s}`);
+
+    // 두 기기가 같은 순간에 같은 답을 보낸 경우. 모두 문항을 「안 푼 것」으로 읽은 뒤 반영을 시도한다.
+    const first = await Promise.all(batches.map((b) => post(page, b, answers)));
+    for (const r of first) expect([200, 409]).toContain(r.status()); // 진 쪽은 409 로 다시 보내라고 답한다
+
+    // 어느 쪽이 이겼든 단어당 한 번만 반영된다
+    expect(await reviewCount()).toBe(2);
+    expect(await wordRow("抽象的")).toMatchObject({ stage: 1, wrong_count: 1, streak: 0 });
+    expect(await wordRow("環境")).toMatchObject({ stage: 3, correct_count: 1, wrong_count: 0 });
+    expect(await testStateRows()).toHaveLength(2);
+
+    // 진 쪽은 같은 묶음을 그대로 다시 보낸다. 이제 문항이 풀려 있으니 반영 없이 ok 로 끝난다.
+    for (const b of batches) {
+      const again = await post(page, b, answers);
+      expect(again.status(), b).toBe(200);
+      expect((await again.json()).applied, b).toBe(0);
+    }
+    expect(await reviewCount()).toBe(2);
+  });
+
   test("테스트에서 틀린 직후 같은 단어의 카드 채점은 주기를 다시 올리지 않는다", async ({ page }) => {
     const wrong = await wordId("抽象的");
     await post(page, "zz-batch-0008", [{ wordId: wrong, typed: "ちゅうそうてき" }]);

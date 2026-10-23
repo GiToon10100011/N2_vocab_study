@@ -448,6 +448,96 @@ test.describe("같은 날 카드 채점 가드", () => {
   });
 });
 
+/**
+ * 스키마가 코드보다 늦은 DB 를 흉내 낸다: 새 표와 새 열 이름을 잠시 바꿔 없는 것처럼 만든다.
+ * 격리 DB 에서만 돌아간다(helpers.sql()). 되돌리기에 실패하면 뒤의 모든 E2E 가 깨지므로 오류를 삼키지 않는다.
+ */
+async function hideNewSchema() {
+  await sql().query(`alter table typing_test_items rename to typing_test_items_off`);
+  await sql().query(`alter table reviews rename column test to test_off`);
+  await sql().query(`alter table settings rename column test_size to test_size_off`);
+}
+
+/** 이름이 바뀐 것만 되돌린다. 앞선 실행이 도중에 죽어 남긴 찌꺼기도 치운다. */
+async function restoreNewSchema() {
+  await sql().query(
+    `do $$ begin
+       if to_regclass('public.typing_test_items_off') is not null then
+         alter table typing_test_items_off rename to typing_test_items;
+       end if;
+       if exists (select 1 from information_schema.columns
+                   where table_name = 'reviews' and column_name = 'test_off') then
+         alter table reviews rename column test_off to test;
+       end if;
+       if exists (select 1 from information_schema.columns
+                   where table_name = 'settings' and column_name = 'test_size_off') then
+         alter table settings rename column test_size_off to test_size;
+       end if;
+     end $$`,
+  );
+}
+
+test.describe("스키마보다 코드가 먼저 올라간 DB (Review Focus 4)", () => {
+  // 최상위 beforeEach(resetDb)가 새 표를 비우므로, 그보다 먼저 찌꺼기를 치운다.
+  test.beforeAll(restoreNewSchema);
+  test.afterEach(async () => {
+    await restoreNewSchema();
+    await sql().query(`update settings set review_limit = 150 where id = 1`);
+  });
+
+  test("홈 · 학습 · 통계 · 설정이 정상이고 테스트 기능만 빠진다", async ({ page }) => {
+    // 스키마가 있었다면 테스트 대상이 되는, 이미 학습한 단어 셋. 모두 오늘 복습이 걸려 있다.
+    await seedTestable(WORDS);
+    await sql().query(`update words set stage = 2, next_review = current_date where note = $1`, [MARK]);
+
+    await hideNewSchema();
+    try {
+      // 어느 화면도 「설정이 필요합니다」 오류 화면으로 바뀌지 않는다
+      for (const path of ["/", "/study", "/stats", "/settings"]) {
+        const res = await page.goto(path);
+        expect(res?.status(), path).toBe(200);
+        await expect(page.getByText("설정이 필요합니다"), path).toHaveCount(0);
+      }
+
+      // 홈에는 테스트 카드가 없고, /test 는 낼 수 있는 단어가 없다고 안내한다
+      await page.goto("/");
+      await expect(page.getByText("오늘의 복습 주기")).toBeVisible();
+      await expect(testCard(page)).toHaveCount(0);
+      await page.goto("/test");
+      await expect(page.getByText("지금 낼 수 있는 단어가 없습니다")).toBeVisible();
+
+      // 설정: 다른 값을 바꿔 저장해도 실패하지 않는다 (문제 수 열만 없을 뿐이다)
+      await page.goto("/settings");
+      await page.getByLabel(/복습 상한/).fill("100");
+      await page.getByRole("button", { name: "저장" }).click();
+      await expect(page.getByText("저장했습니다.")).toBeVisible();
+
+      // 학습: 카드 하나를 채점하고 나가면 /api/grades 가 예전처럼 반영한다
+      await page.goto("/study");
+      await page.keyboard.press("Space");
+      await page.keyboard.press("1");
+      await page.getByRole("button", { name: "나가기" }).click();
+      await page.waitForURL("**/");
+      await expect.poll(reviewCount).toBe(1);
+
+      // 테스트 답은 503 으로 거절한다 — ok 로 답하면 클라이언트가 답을 지워 버린다
+      const res = await page.request.post("/api/test-answers", {
+        data: {
+          batchId: "zz-noschema-0001",
+          testDay: TODAY,
+          answers: [{ wordId: "w-0123456789", typed: "あ" }],
+        },
+      });
+      expect(res.status()).toBe(503);
+      expect(await res.json()).toMatchObject({ ok: false });
+    } finally {
+      await restoreNewSchema(); // 실패하면 그대로 던진다. 이름이 안 돌아오면 뒤의 테스트가 모두 깨진다.
+    }
+
+    expect(await testSize()).toBe(40); // 되돌린 뒤 설정 행이 멀쩡하다
+  });
+});
+
 test.describe("실전 테스트 설정", () => {
   test("문제 수를 바꿔 저장하고, 범위 밖 값은 10~100 으로 맞춘다", async ({ page }) => {
     await page.goto("/settings");

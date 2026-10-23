@@ -38,10 +38,19 @@ lib/study-ranges.ts  풀이 범위(그날 푼 문항의 시작·끝 번호) 검�
 lib/grade-outbox.ts  되돌리기 창과 미전송 채점 보관. 저장소·전송을 받아 쓰므로 그대로 테스트한다
 lib/grade-client.ts  위 규칙에 localStorage 와 fetch 를 붙이는 브라우저 쪽 연결부. 전송을 한 줄로 세우고,
                      학습 화면이 큐를 새로 받아야 하는지 정한다
+lib/reading-answer.ts  실전 테스트의 답 판정. 입력을 가나로 확정하고(ー 보존) 한 글자라도 다르면 오답.
+                       화면과 서버가 이 파일 하나를 쓴다. 순수 함수
+lib/syllable-diff.ts   틀린 읽기를 음절 단위로 대조한다. 순수 함수
+lib/typing-test.ts     실전 테스트 규칙: 이력(재시험·통과) · 출제 대상 · 위험도 가중 선택 · 출현 판정. 순수 함수
+lib/typing-test-load.ts  위 규칙에 DB 를 붙인 서버 쪽 조회·시작·읽기 주의 조회. 스키마가 없으면 「없음」으로 답한다
+lib/grade-apply.ts 영수증 열쇠 · 단어 갱신 · 리뷰 insert 공용 조각. /api/grades 와 /api/test-answers 가 같이 쓴다
 lib/actions/       Server Action ("use server")
 app/api/grades/    채점 배치. 클라이언트가 fetch 로 보내고 응답의 ok 를 확인한다(Route Handler).
                    같은 묶음은 한 번만 반영한다
+app/api/test-answers/  실전 테스트 답 배치. 정오를 믿지 않고 서버가 다시 채점한다. 스키마가 없으면 503
 app/study/         세션 화면. CardFace 는 테스트를 위해 분리되어 있다
+app/test/          실전 테스트 화면. QuestionFace 는 표시 전용이라 누출 테스트가 있다
+app/RecoveryNotice.tsx, app/useGradeRecovery.ts  학습·테스트 화면이 같이 쓰는 미전송 채점 복구
 app/mistakes/new/  오답 입력 폼과 풀이 범위 입력. 목록(/mistakes)은 아직 없다 — PLAN-mistakes.md 3단계
 app/manifest.ts    PWA 매니페스트. 아이콘은 scripts/make-icons.mjs 가 생성한다
 public/sw.js       서비스 워커. 정적 자산만 캐시한다
@@ -104,12 +113,41 @@ proxy.ts           비밀번호 게이트 (Next 16 에서 middleware 는 proxy �
 - `fetchRecentStudyRanges` 는 표가 없는 DB 에서 null 을 주고, 그때 화면은 범위 칸만 감춘다.
   스키마보다 코드가 먼저 올라가도 쓰고 있는 오답 입력 화면이 죽지 않게 하려는 것이다.
 
+### 실전 테스트 (한자 → 읽기 타이핑)
+
+이틀에 한 번, 매일 SRS 와 따로 뜬다. 설계: `docs/superpowers/specs/2026-10-22-typing-test-design.md`.
+
+- **테스트 채점 행은 `reviews.test = true`, `prompt_type = 's2r'` 다.** 유형 enum 을 늘리지 않는다(규칙 2).
+  홈 · `/stats` 의 복습 수와 정답률은 `to_jsonb(r) ->> 'test'` 로 이 행을 뺀다. 열 이름으로 읽지 않는
+  이유는 `undo_seconds` 와 같다 — 열이 없는 DB 에 코드가 먼저 올라가도 화면이 죽지 않게 하려는 것이다.
+- **판정은 `judgeReading` 하나이고 서버가 다시 채점한다.** 클라이언트는 정오가 아니라 확정한 가나(`typed`)만
+  보낸다. 가타카나는 히라가나로 바꿔 비교하되 **`ー` 는 보존한다** — `wanakana.toHiragana` 를 비교에 쓰면
+  `チューショーテキ` 가 정답이 된다. 표기와 읽기가 둘 다 `だ` 로 끝나면 입력의 `だ` 는 있든 없든 정답이다.
+  「오타였음」 · 되돌리기 · 채점 뒤 정답 인정은 만들지 않는다(자기 판정 구멍).
+- **테스트 정답은 stage 를 올리지 않고, 오답은 「몰랐음」처럼 stage 1 · 내일로 내린다**(`planTestGrades`).
+  오답의 `last_wrong_type` 은 `'s2r'` 이라 다음 플래시카드가 읽기를 묻는다. 같은 날 테스트에서 틀린 단어의
+  카드 채점은 `planGrades` 의 `testWrongToday` 가드가 로그만 남긴다 — 테스트 전에 열어 둔 세션이 주기를
+  다시 올리는 것을 막는다.
+- **`typing_test_items` 는 친 답이 들어 있어 백업하지 않는다**(`lib/backup.test.ts` 가 막는다). 테스트 정오는
+  `reviews`(test 열)로 백업된다. 안 푼 문항 = `answered_at is null`.
+- **같은 답은 한 번만 반영한다.** 같은 묶음은 영수증(`grade_batches`)이, 다른 묶음 id 로 온 같은 답은
+  「안 푼 문항에만 반영」이 막는다. `receiptKey` 의 입력 모양을 바꾸지 말 것 — 배포 순간 재전송된 묶음이
+  두 번 반영된다(`lib/grade-apply.test.ts` 가 값을 고정한다).
+- **날이 바뀐 미완료 테스트는 이어서 본다**(항상 1회분). 끝낸 날 = 마지막 답의 학습일, 다음 테스트는
+  거기서 이틀 뒤. 하루 경계 04:00 은 `studyDate()` 가 맡는다.
+- **스키마가 없는 DB 에서 홈 · `/study` · `/stats` · `/settings` 는 죽지 않는다.** 새 기능만 빠진다
+  (`isMissingSchema`). `/api/test-answers` 는 503 으로 답해 클라이언트가 답을 지우지 않게 한다.
+  `e2e/typing-test.spec.ts` 의 「스키마보다 코드가 먼저 올라간 DB」 가 표 · 열 이름을 바꿔 이를 지킨다.
+- IME 확정 Enter(`isComposing` · `keyCode 229`)는 제출이 아니다(`app/test/keys.ts`). 입력칸은 친 그대로
+  두고 가나 변환은 미리보기 줄에만 보여 준다(규칙 6).
+
 ## 검증
 
 ```bash
-npm test          # 120개 (SRS 전이표, 유형 분포, 큐, 읽기 변환, 파서, 카드 누출, 오답 검증, 백업 대상, 되돌리기 창, 채점 복구, 풀이 범위)
-npm run test:db   # 34개 (실제 Neon 왕복)
-npm run test:e2e  # 26개 (브라우저, 격리 DB)
+npm test          # 204개 (SRS 전이표, 유형 분포, 큐, 읽기 변환, 파서, 카드 누출, 오답 검증, 백업 대상, 되돌리기 창, 채점 복구, 풀이 범위,
+                  #       실전 테스트: 답 판정 · 음절 대조 · 출제 선택 · 출현 · 문제 누출 · IME Enter · 영수증 열쇠)
+npm run test:db   # 34개 (실제 Neon 왕복) — 운영 DB 로 붙는다. 실전 테스트는 이 명령으로 검증하지 않았다
+npm run test:e2e  # 45개 (브라우저, 격리 DB)
 npm run typecheck
 npx eslint .
 npm run build

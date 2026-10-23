@@ -104,6 +104,23 @@ export function splitChoices(question: string | null | undefined): string[] {
     .filter(Boolean);
 }
 
+/**
+ * 오답 칸이 비었는가. 문항 번호와 내용 칸(선택지 · 고른 답 · 정답 · 이유)이 모두 공백이면 비었다.
+ * 분류와 출처는 내용이 아니다 — validateMistake 가 empty 로 막는 것과 같은 기준이다.
+ * 저장 버튼 하나가 「오답을 저장할지, 범위만 저장할지」 가를 때 쓴다.
+ */
+export function isBlankMistake(
+  input: Pick<MistakeInput, "ref" | "question" | "chosen" | "answer" | "why">,
+): boolean {
+  return (
+    text(input.ref) === null &&
+    (joinChoices(splitChoices(text(input.question))) || null) === null &&
+    text(input.chosen) === null &&
+    text(input.answer) === null &&
+    text(input.why) === null
+  );
+}
+
 export function validateMistake(input: MistakeInput): MistakeValidation {
   if (!isSource(input?.source)) return { ok: false, reason: "source" };
   if (!isCategory(input.category)) return { ok: false, reason: "category" };

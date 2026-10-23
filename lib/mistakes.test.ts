@@ -6,6 +6,7 @@ import {
   MISTAKE_SOURCES,
   MISTAKE_SOURCE_LABEL,
   MISTAKE_TEXT_MAX,
+  isBlankMistake,
   joinChoices,
   splitChoices,
   validateMistake,
@@ -177,5 +178,33 @@ describe("선택지", () => {
       ok: true,
       value: { question: "あ\nい" },
     });
+  });
+});
+
+describe("오답 칸이 비었는가", () => {
+  const blank = { ref: "", question: "", chosen: "", answer: "", why: "" };
+
+  it("내용 칸이 모두 비었으면 비었다 — 분류와 출처는 내용이 아니다", () => {
+    expect(isBlankMistake(blank)).toBe(true);
+    expect(isBlankMistake({})).toBe(true);
+  });
+
+  it("공백과 빈 줄뿐인 칸도 빈 칸이다", () => {
+    expect(isBlankMistake({ ref: "  ", question: "\n \n", chosen: " ", answer: "\t", why: "" })).toBe(true);
+  });
+
+  it("한 칸이라도 적혀 있으면 채워졌다", () => {
+    for (const key of ["ref", "question", "chosen", "answer", "why"] as const) {
+      expect(isBlankMistake({ ...blank, [key]: "あ" }), key).toBe(false);
+    }
+  });
+
+  it("validateMistake 가 empty 라고 하는 것과 어긋나지 않는다", () => {
+    // 분류를 골라 둔 채 모든 내용 칸이 비면 저장 검증은 empty 로 막는다. 같은 입력은 비었다고 답해야 한다.
+    expect(validateMistake({ ...base, ref: "", question: "", chosen: "", answer: "", why: "" })).toEqual({
+      ok: false,
+      reason: "empty",
+    });
+    expect(isBlankMistake({ ref: "", question: "", chosen: "", answer: "", why: "" })).toBe(true);
   });
 });

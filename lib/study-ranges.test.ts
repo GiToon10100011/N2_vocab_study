@@ -2,8 +2,10 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { MISTAKE_SOURCES } from "./mistakes";
 import {
+  RANGE_SKIPPED_TEXT,
   STUDY_RANGE_MAX,
   draftStudyRange,
+  planFormSave,
   validateStudyRange,
   type StudyRange,
 } from "./study-ranges";
@@ -100,5 +102,81 @@ describe("draftStudyRange", () => {
   it("그 교재를 푼 적이 없으면 비워 둔다", () => {
     expect(draftStudyRange(ranges, "reading", "2026-01-04")).toEqual({ from: "", to: "" });
     expect(draftStudyRange([], "master1500", "2026-01-04")).toEqual({ from: "", to: "" });
+  });
+});
+
+describe("저장 버튼 하나 — 오답과 범위 중 무엇을 저장하는가", () => {
+  // 핸드오프의 표 네 줄. 오답이 채워졌는지(mistakeBlank)와 범위 칸 둘로 정한다.
+  it("오답이 채워지고 범위가 둘 다 채워지면 둘 다 저장한다", () => {
+    expect(planFormSave({ mistakeBlank: false, from: "11", to: "20" })).toEqual({
+      mistake: true,
+      range: true,
+      rangeSkipped: null,
+    });
+  });
+
+  it("오답이 채워지고 끝 번호가 비었으면 오답만 저장하고 이유를 알린다 — 막지 않는다", () => {
+    // 풀면서 하나씩 적을 때 모르는 끝 번호로 범위를 덮어쓰지 않으려는 것이다.
+    expect(planFormSave({ mistakeBlank: false, from: "11", to: "" })).toEqual({
+      mistake: true,
+      range: false,
+      rangeSkipped: "no-end",
+    });
+    expect(RANGE_SKIPPED_TEXT["no-end"]).toBe("범위는 저장하지 않았습니다 (끝 번호 없음)");
+  });
+
+  it("오답이 비고 범위가 둘 다 채워지면 범위만 저장한다 (오답이 없는 날)", () => {
+    expect(planFormSave({ mistakeBlank: true, from: "11", to: "20" })).toEqual({
+      mistake: false,
+      range: true,
+      rangeSkipped: null,
+    });
+  });
+
+  it("오답도 범위도 비었으면 아무것도 저장하지 않는다 — 오답 저장의 빈 칸 처리로 넘긴다", () => {
+    // mistake: true 는 저장한다는 뜻이 아니라, 오늘의 오답 저장이 하던 대로 검증해 안내를 띄우라는 뜻이다.
+    expect(planFormSave({ mistakeBlank: true, from: "", to: "" })).toEqual({
+      mistake: true,
+      range: false,
+      rangeSkipped: null,
+    });
+  });
+
+  // 표가 말하지 않은 사이의 경우
+  it("오답이 채워지고 범위 칸이 둘 다 비었으면 오답만 저장하고 안내는 하지 않는다", () => {
+    expect(planFormSave({ mistakeBlank: false, from: "", to: "" })).toEqual({
+      mistake: true,
+      range: false,
+      rangeSkipped: null,
+    });
+  });
+
+  it("오답이 채워지고 시작 번호만 비었으면 오답만 저장하고 이유를 알린다", () => {
+    expect(planFormSave({ mistakeBlank: false, from: "", to: "20" })).toEqual({
+      mistake: true,
+      range: false,
+      rangeSkipped: "no-start",
+    });
+  });
+
+  it("오답이 비고 범위가 한쪽만 채워졌으면 범위를 저장하려는 것이므로 범위 검증이 안내하게 한다", () => {
+    for (const [from, to] of [["11", ""], ["", "20"]]) {
+      expect(planFormSave({ mistakeBlank: true, from, to })).toEqual({
+        mistake: false,
+        range: true,
+        rangeSkipped: null,
+      });
+    }
+  });
+
+  it("공백만 있는 칸은 빈 칸이다", () => {
+    expect(planFormSave({ mistakeBlank: false, from: "11", to: "  " })).toMatchObject({
+      range: false,
+      rangeSkipped: "no-end",
+    });
+    expect(planFormSave({ mistakeBlank: true, from: " ", to: " " })).toMatchObject({
+      mistake: true,
+      range: false,
+    });
   });
 });

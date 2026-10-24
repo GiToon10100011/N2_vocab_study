@@ -9,6 +9,7 @@ import {
   MISTAKE_SOURCES,
   MISTAKE_SOURCE_LABEL,
   MISTAKE_TEXT_MAX,
+  isBlankMistake,
   joinChoices,
   splitChoices,
   validateMistake,
@@ -19,8 +20,10 @@ import {
 import { saveStudyRangeAction } from "@/lib/actions/study-ranges";
 import { addDays } from "@/lib/srs";
 import {
+  RANGE_SKIPPED_TEXT,
   STUDY_RANGE_MAX,
   draftStudyRange,
+  planFormSave,
   validateStudyRange,
   type StudyRange,
   type StudyRangeInvalid,
@@ -78,8 +81,9 @@ export function MistakeForm({
   const [range, setRange] = useState(() =>
     draftStudyRange(initialRanges ?? [], initialSource, today),
   );
-  const [rangeSaving, setRangeSaving] = useState(false);
   const [rangeError, setRangeError] = useState<string | null>(null);
+  /** 오답은 저장했는데 범위는 저장하지 않았을 때 그 이유. 오류가 아니라 알림이다. */
+  const [rangeNote, setRangeNote] = useState<string | null>(null);
   const fromRef = useRef<HTMLInputElement>(null);
   const toRef = useRef<HTMLInputElement>(null);
   const [values, setValues] = useState({ ...EMPTY, ref: initialRef });
@@ -90,6 +94,11 @@ export function MistakeForm({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  /**
+   * 칸에 이어받아 채워 둔 문항 번호. 이 번호 그대로이고 분류도 안 골랐다면 오답을 적는 중이 아니다 —
+   * 번호만 남은 채로 범위를 저장하려는 것이다.
+   */
+  const carriedRef = useRef(initialRef);
   const inputs = useRef<Partial<Record<FieldKey, HTMLInputElement | null>>>({});
   const categoryRef = useRef<HTMLSelectElement>(null);
   const choiceInputs = useRef(new Map<number, HTMLInputElement>());
@@ -100,6 +109,11 @@ export function MistakeForm({
   // IME 조합 중에 눌린 Enter 는 "변환 확정"이므로 칸 이동에 쓰면 안 된다.
   const composing = useRef(false);
 
+  /**
+   * 저장 버튼 하나가 오답과 풀이 범위를 함께 다룬다(무엇을 저장할지는 planFormSave 가 정한다).
+   * 둘은 따로 실패할 수 있다. 오답이 먼저 저장되고 범위가 실패하면 오답은 남고 범위만 다시 누르면 된다 —
+   * 저장된 오답 칸은 비워지므로 다시 눌러도 오답은 두 번 가지 않는다.
+   */
   async function save() {
     if (saving) return;
     // 분류는 select 에서 직접 읽는다. Enter 로 저장할 때 state 가 한 박자 늦을 수 있다(아래 참고).
@@ -109,37 +123,117 @@ export function MistakeForm({
       ...values,
       question: joinChoices(choices.map((c) => c.text)),
     };
-    const checked = validateMistake(input);
-    if (!checked.ok) {
-      setError(ERROR_TEXT[checked.reason]);
-      if (checked.reason === "category") categoryRef.current?.focus();
-      else inputs.current.ref?.focus();
+    // 표가 없는 DB 에서는 범위 칸이 없으므로 범위를 다루지 않는다.
+    const rangeText = ranges ? range : { from: "", to: "" };
+    // 분류를 골랐다면 오답을 적으려는 것이다. 문항 번호는 직전 오답에서 이어받아 채워져 있을 뿐이다.
+    const plan = planFormSave({
+      mistakeBlank: !input.category && isBlankMistake(input, carriedRef.current),
+      ...rangeText,
+    });
+
+    // 범위를 검증한다. 이미 저장된 같은 값은 다시 보내지 않는다.
+    let rangeToSave: { from_no: number; to_no: number } | null = null;
+    let rangeInvalid: StudyRangeInvalid | null = null;
+    if (plan.range) {
+      const checked = validateStudyRange({ source, ...rangeText });
+      if (!checked.ok) rangeInvalid = checked.reason;
+      else if (
+        !(ranges ?? []).some(
+          (r) =>
+            r.source === source &&
+            r.study_day === studyDay &&
+            r.from_no === checked.value.from_no &&
+            r.to_no === checked.value.to_no,
+        )
+      ) {
+        rangeToSave = checked.value;
+      }
+    }
+
+    setRangeError(null);
+    setRangeNote(null);
+
+    // 범위만 저장하려는데 보낼 것이 없다(이미 저장된 값 그대로다). 오답 칸을 비워 두고 누른 것과 같으니
+    // 예전 오답 저장이 하던 대로 빈 칸을 알린다.
+    const saveMistake = plan.mistake || (rangeToSave === null && rangeInvalid === null);
+    if (saveMistake) {
+      const checked = validateMistake(input);
+      if (!checked.ok) {
+        // 오답이 저장되지 않으면 범위도 보내지 않는다. 오답 없이 범위만 따로 저장되어 어긋나지 않게.
+        setError(ERROR_TEXT[checked.reason]);
+        if (checked.reason === "category") categoryRef.current?.focus();
+        else inputs.current.ref?.focus();
+        return;
+      }
+    } else if (rangeInvalid) {
+      setError(null);
+      setRangeError(RANGE_ERROR_TEXT[rangeInvalid]);
+      // 시작 번호는 채워져 있는 경우가 많다. 비어 있을 때만 그쪽으로 간다.
+      (range.from.trim() === "" ? fromRef : toRef).current?.focus();
       return;
     }
+
     setSaving(true);
     setError(null);
     try {
-      const res = await addMistakeAction({ ...input, studyDay });
-      if (!res.ok) {
-        setError(ERROR_TEXT[res.reason]);
-        return;
+      if (saveMistake) {
+        try {
+          const res = await addMistakeAction({ ...input, studyDay });
+          if (!res.ok) {
+            setError(ERROR_TEXT[res.reason]);
+            return;
+          }
+          setSaved((s) => [res.mistake, ...s]);
+          // 출처와 문항 번호는 남긴다. 같은 회차를 이어서 적으므로 번호 끝만 고치면 된다.
+          carriedRef.current = res.mistake.ref ?? "";
+          setValues({ ...EMPTY, ref: carriedRef.current });
+          // 선택지 없이 넘긴 문항이었다면(줄이 0개) 다음 문항도 줄 없이 시작한다. 문법 회상처럼
+          // 선택지가 없는 문항이 이어질 때 Enter 한 번을 아낀다.
+          const fresh: ChoiceRow = { id: nextChoiceId.current++, text: "" };
+          setChoices((c) => (c.length === 0 ? [] : [fresh]));
+          // 분류는 문항마다 새로 판단해야 하므로 비운다.
+          setCategory("");
+          if (plan.rangeSkipped) setRangeNote(RANGE_SKIPPED_TEXT[plan.rangeSkipped]);
+        } catch {
+          setError("오답 저장에 실패했습니다. 네트워크를 확인해주세요.");
+          return;
+        }
       }
-      setSaved((s) => [res.mistake, ...s]);
-      // 출처와 문항 번호는 남긴다. 같은 회차를 이어서 적으므로 번호 끝만 고치면 된다.
-      setValues({ ...EMPTY, ref: res.mistake.ref ?? "" });
-      // 선택지 없이 넘긴 문항이었다면(줄이 0개) 다음 문항도 줄 없이 시작한다. 문법 회상처럼
-      // 선택지가 없는 문항이 이어질 때 Enter 한 번을 아낀다.
-      const fresh: ChoiceRow = { id: nextChoiceId.current++, text: "" };
-      setChoices((c) => (c.length === 0 ? [] : [fresh]));
-      // 분류는 문항마다 새로 판단해야 하므로 비운다.
-      setCategory("");
+
+      if (rangeToSave) {
+        try {
+          const res = await saveStudyRangeAction({
+            source,
+            from: rangeToSave.from_no,
+            to: rangeToSave.to_no,
+            studyDay,
+          });
+          if (!res.ok) {
+            setRangeError(RANGE_ERROR_TEXT[res.reason]);
+          } else {
+            const done = res.range;
+            setRanges((rs) => [
+              done,
+              ...(rs ?? []).filter(
+                (r) => r.source !== done.source || r.study_day !== done.study_day,
+              ),
+            ]);
+            setRange({ from: String(done.from_no), to: String(done.to_no) });
+          }
+        } catch {
+          setRangeError("범위 저장에 실패했습니다. 네트워크를 확인해주세요.");
+        }
+      } else if (rangeInvalid) {
+        // 범위가 틀려도 오답은 막지 않았다. 저장한 뒤에 범위 쪽 문제를 따로 알린다.
+        setRangeError(RANGE_ERROR_TEXT[rangeInvalid]);
+      }
+
+      // 오답을 적었든 범위를 적었든 이어서 다음 오답을 적는다.
       const ref = inputs.current.ref;
       if (ref) {
         ref.focus();
         ref.setSelectionRange(ref.value.length, ref.value.length);
       }
-    } catch {
-      setError("저장에 실패했습니다. 네트워크를 확인해주세요.");
     } finally {
       setSaving(false);
     }
@@ -151,39 +245,7 @@ export function MistakeForm({
     setStudyDay(nextDay);
     setRange(draftStudyRange(ranges ?? [], nextSource, nextDay));
     setRangeError(null);
-  }
-
-  async function saveRange() {
-    if (rangeSaving) return;
-    const input = { source, from: range.from, to: range.to };
-    const checked = validateStudyRange(input);
-    if (!checked.ok) {
-      setRangeError(RANGE_ERROR_TEXT[checked.reason]);
-      // 시작 번호는 채워져 있는 경우가 많다. 비어 있을 때만 그쪽으로 간다.
-      (range.from.trim() === "" ? fromRef : toRef).current?.focus();
-      return;
-    }
-    setRangeSaving(true);
-    setRangeError(null);
-    try {
-      const res = await saveStudyRangeAction({ ...input, studyDay });
-      if (!res.ok) {
-        setRangeError(RANGE_ERROR_TEXT[res.reason]);
-        return;
-      }
-      const done = res.range;
-      setRanges((rs) => [
-        done,
-        ...(rs ?? []).filter((r) => r.source !== done.source || r.study_day !== done.study_day),
-      ]);
-      setRange({ from: String(done.from_no), to: String(done.to_no) });
-      // 범위를 적었으면 이어서 오답을 적는다.
-      inputs.current.ref?.focus();
-    } catch {
-      setRangeError("저장에 실패했습니다. 네트워크를 확인해주세요.");
-    } finally {
-      setRangeSaving(false);
-    }
+    setRangeNote(null);
   }
 
   /** 칸을 넘기는 Enter 인가. IME 조합을 확정하는 Enter 는 아니다. */
@@ -291,7 +353,7 @@ export function MistakeForm({
           if (!isNextKey(e)) return;
           e.preventDefault();
           if (isFrom) toRef.current?.focus();
-          else void saveRange();
+          else void save();
         }}
       />
     );
@@ -363,20 +425,13 @@ export function MistakeForm({
       {ranges && (
         <section className="mt-4 rounded-xl border border-border bg-surface px-4 py-3">
           <p className="text-sm text-muted">
-            푼 범위 <span className="text-xs">· 오답이 없어도 적는다 · 교재마다 하루 한 줄</span>
+            푼 범위{" "}
+            <span className="text-xs">· 오답 칸을 비워 두고 저장하면 범위만 저장된다 · 교재마다 하루 한 줄</span>
           </p>
           <div className="mt-2 flex items-center gap-2">
             {rangeInput("from")}
             <span className="text-muted">~</span>
             {rangeInput("to")}
-            <button
-              type="button"
-              onClick={() => void saveRange()}
-              disabled={rangeSaving}
-              className="ml-auto rounded-lg border border-border px-4 py-3 text-sm font-semibold disabled:opacity-50"
-            >
-              범위 저장
-            </button>
           </div>
           <p className="mt-2 text-xs text-muted">
             {dayRanges.length > 0
@@ -391,6 +446,7 @@ export function MistakeForm({
               : `${dayLabel} 저장된 범위가 없습니다`}
           </p>
           {rangeError && <p className="mt-1 text-sm text-danger">{rangeError}</p>}
+          {rangeNote && <p className="mt-1 text-xs text-muted">{rangeNote}</p>}
         </section>
       )}
 
@@ -516,8 +572,8 @@ export function MistakeForm({
         </dl>
 
         <p className="text-xs text-muted">
-          Enter = 다음 칸 · 선택지의 빈 줄에서 Enter = 고른 답으로 · 분류에서 Enter = 저장하고 문항
-          번호로
+          Enter = 다음 칸 · 선택지의 빈 줄에서 Enter = 고른 답으로 · 분류나 끝 번호에서 Enter =
+          저장하고 문항 번호로
         </p>
 
         {error && <p className="text-sm text-danger">{error}</p>}

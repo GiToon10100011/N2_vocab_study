@@ -72,6 +72,46 @@ body {
   line-height: 1.3;
 }
 
+/* 실전 테스트 풀이 화면의 문제 칸. 「읽기 · 표기 · 뜻」 세 줄 자리를 늘 잡아 두고 표기를 가운데 줄에 고정한다.
+   남는 높이는 위아래 빈칸이 나눠 갖고, 키보드가 열리면 위 빈칸을 두 배로 잡아 표기를 입력칸 쪽으로 내린다.
+   판정이 나와도 줄 자리가 그대로라 표기가 움직이지 않는다(e2e/typing-test.spec.ts 「키보드가 열린 화면」). */
+.test-stage {
+  container-type: size;
+  display: grid;
+  grid-template-rows: minmax(auto, 1fr) auto minmax(auto, 1fr);
+  justify-items: center;
+  row-gap: 10px;
+  overflow: hidden;
+  text-align: center;
+}
+.test-stage[data-keyboard="open"] {
+  grid-template-rows: minmax(auto, 2fr) auto minmax(auto, 1fr);
+}
+.test-reading {
+  align-self: end;
+  min-height: 1.35em;
+  font-size: clamp(16px, 5.2cqw, 22px);
+  line-height: 1.35;
+  letter-spacing: 0.04em;
+}
+.test-kanji {
+  font-size: clamp(2.5rem, min(17cqw, 30cqh), 6.5rem);
+  line-height: 1.15;
+  letter-spacing: 0.06em;
+  font-weight: 500;
+}
+.test-meaning {
+  align-self: start;
+  min-height: 1.45em;
+  max-width: 22em;
+  font-size: clamp(16px, 4.6cqw, 20px);
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
 ruby {
   ruby-position: over;
 }

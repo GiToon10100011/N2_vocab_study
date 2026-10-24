@@ -11,7 +11,8 @@ import type { TestAnswered, TestQuestion } from "@/lib/types";
 import { RecoveryNotice } from "../RecoveryNotice";
 import { useGradeRecovery } from "../useGradeRecovery";
 import { isSubmitKey } from "./keys";
-import { DiffLine, QuestionFace, type Verdict } from "./QuestionFace";
+import { DiffLine, QuestionFace, VerdictLine, type Verdict } from "./QuestionFace";
+import { useVisibleViewport } from "./useVisibleViewport";
 
 /** 답 몇 개마다 서버로 보낼까. 문제마다 왕복하지 않되, 앱이 죽어도 이 기기에서만 쥐고 있는 양을 줄인다. */
 const FLUSH_EVERY = 10;
@@ -40,6 +41,7 @@ export function TestSession({
 }) {
   const router = useRouter();
   const { recovery, unsent, blockedRef, recover, skip } = useGradeRecovery();
+  const viewport = useVisibleViewport();
 
   const [index, setIndex] = useState(0);
   const [input, setInput] = useState("");
@@ -71,7 +73,8 @@ export function TestSession({
 
   // 다음 문제로 넘어가도 입력칸은 그대로 두고 포커스만 돌려준다(아이폰에서 키보드가 내려가지 않게).
   useEffect(() => {
-    if (!finished && recovery === "none") inputRef.current?.focus();
+    // 화면은 보이는 영역에 맞춰 고정돼 있다. 포커스 때문에 사파리가 페이지를 밀지 않게 한다.
+    if (!finished && recovery === "none") inputRef.current?.focus({ preventScroll: true });
   }, [index, finished, recovery]);
 
   const question: TestQuestion | undefined = questions[index];
@@ -201,30 +204,64 @@ export function TestSession({
   const progress = Math.round((position / total) * 100);
 
   return (
-    <main className="mx-auto flex min-h-dvh max-w-2xl flex-col px-5 py-4">
-      <header className="no-select">
-        <div className="flex items-baseline justify-between text-sm text-muted">
-          <span>실전 테스트</span>
-          <span className="tabular-nums">
-            {position} / {total}
-          </span>
-        </div>
-        <div className="mt-2 h-1 w-full overflow-hidden rounded-full bg-border">
-          <div className="h-full bg-accent transition-all" style={{ width: `${progress}%` }} />
-        </div>
+    /*
+      화면 전체를 지금 보이는 영역(visualViewport)에 맞춰 고정하고, 입력칸을 그 맨 아래 — 키보드 바로 위에 붙인다.
+      아이폰은 키보드가 올라와도 레이아웃 높이(dvh)를 줄이지 않아서, dvh 기준으로 그리면 아래쪽이 키보드 밑에 깔리고
+      사파리가 페이지를 밀어 올려 문제가 화면 밖으로 나간다. 남는 높이는 문제 칸이 갖고, 화면 어디에도 스크롤이 없다.
+      e2e/typing-test.spec.ts 「키보드가 열린 화면」 이 지킨다.
+    */
+    <main
+      className={`fixed inset-x-0 top-0 mx-auto flex max-w-2xl flex-col px-5 pt-[env(safe-area-inset-top)] ${
+        viewport ? "" : "h-dvh"
+      } ${viewport?.keyboard ? "pb-2.5" : "pb-[calc(10px+env(safe-area-inset-bottom))]"}`}
+      style={
+        viewport
+          ? { height: viewport.height, transform: viewport.top ? `translateY(${viewport.top}px)` : undefined }
+          : undefined
+      }
+    >
+      <header className="no-select flex min-h-11 items-center justify-between text-sm text-muted">
+        <button onClick={() => void leave()} className="py-2">
+          <span aria-hidden>‹ </span>나가기
+        </button>
+        <span className="tabular-nums">
+          {position} / {total}
+        </span>
       </header>
+      <div className="h-1 w-full overflow-hidden rounded-full bg-border">
+        <div className="h-full bg-accent transition-all" style={{ width: `${progress}%` }} />
+      </div>
 
-      {/*
-        입력칸을 화면 맨 아래에 두지 않고 문제 바로 아래에 붙인다. 아이폰은 키보드가 올라와도 레이아웃 높이(dvh)를
-        줄이지 않고 키보드에 가린 입력칸이 보이게 페이지를 위로 밀어 올린다. 맨 아래에 있으면 그때 문제가
-        화면 밖으로 나가서 위로 스크롤해야 했다. e2e/typing-test.spec.ts 「키보드가 열린 화면」 이 지킨다.
-      */}
-      <section className="flex flex-col items-center py-4 text-center">
-        <QuestionFace question={question} verdict={verdict} />
-      </section>
+      <div data-testid={verdict ? "verdict" : undefined} className="flex min-h-0 flex-1 flex-col">
+        <section
+          data-testid="question-stage"
+          data-keyboard={viewport?.keyboard ? "open" : undefined}
+          className="test-stage min-h-0 flex-1 py-2"
+        >
+          <QuestionFace question={question} verdict={verdict} />
+        </section>
 
-      <footer className="pb-[env(safe-area-inset-bottom)]">
-        {/* 입력칸은 친 그대로 둔다. 가나로 어떻게 읽히는지는 바로 아래 미리보기 줄에만 보여 준다. */}
+        {/* 판정 줄: 두 줄 자리를 늘 잡아 둔다. 판정이 한 줄을 넘겨도 아래 칸 높이가 그대로라 문제가 움직이지 않는다.
+            입력하는 동안에는 아랫줄(입력칸 바로 위)에 미리보기나 안내가 나온다. */}
+        <div className="flex min-h-12 flex-col items-center justify-end text-center leading-normal">
+          {verdict ? (
+            <VerdictLine verdict={verdict} />
+          ) : message ? (
+            <p role="alert" className="text-sm text-danger">
+              {message}
+            </p>
+          ) : (
+            input.trim() !== "" && (
+              <p data-testid="reading-preview" lang="ja" className="text-base text-muted">
+                → {convertAnswer(input)}
+              </p>
+            )
+          )}
+        </div>
+      </div>
+
+      <div className="mt-3 flex gap-2">
+        {/* 입력칸은 친 그대로 둔다. 가나로 어떻게 읽히는지는 바로 위 미리보기 줄에만 보여 준다. */}
         <input
           ref={inputRef}
           value={input}
@@ -246,34 +283,21 @@ export function TestSession({
           autoCorrect="off"
           autoComplete="off"
           spellCheck={false}
-          className="w-full rounded-lg border border-border bg-bg px-4 py-3 text-center text-2xl"
+          placeholder="읽기를 가나로"
+          // 초록 · 붉은 테두리는 판정에만 쓴다. 입력하는 동안의 포커스는 회색이다(초록 포커스가 오답과 헷갈렸다).
+          className={`h-11 min-w-0 flex-1 rounded-[10px] border-[1.5px] bg-surface px-3 text-center text-xl outline-none ${
+            verdict ? (verdict.correct ? "border-accent" : "border-danger") : "border-border focus:border-muted"
+          }`}
         />
-        <div className="mt-2 min-h-7 text-center">
-          {input.trim() !== "" && (
-            <p data-testid="reading-preview" lang="ja" className="text-lg text-muted">
-              → {convertAnswer(input)}
-            </p>
-          )}
-        </div>
-        {message && (
-          <p role="alert" className="text-center text-sm text-danger">
-            {message}
-          </p>
-        )}
-
         <button
+          // 눌러도 입력칸 포커스를 잃지 않게 한다. 잃으면 아이폰에서 키보드가 내려가고 화면 높이가 다시 바뀐다.
+          onPointerDown={(e) => e.preventDefault()}
           onClick={verdict ? next : submit}
-          className="mt-3 w-full rounded-xl bg-accent px-6 py-4 text-lg font-semibold text-accent-fg"
+          className="h-11 min-w-[72px] shrink-0 rounded-[10px] bg-accent px-4 text-base font-semibold text-accent-fg"
         >
-          {verdict ? "다음" : "제출"} <span className="text-sm font-normal opacity-90">(Enter)</span>
+          {verdict ? "다음" : "제출"}
         </button>
-
-        <div className="no-select mt-4 flex items-center justify-between text-xs text-muted">
-          <button onClick={() => void leave()} className="underline underline-offset-4">
-            나가기
-          </button>
-        </div>
-      </footer>
+      </div>
     </main>
   );
 }

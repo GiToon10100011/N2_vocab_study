@@ -601,32 +601,61 @@ test.describe("실전 테스트 설정", () => {
 });
 
 /**
- * 아이폰은 키보드가 올라와도 레이아웃 뷰포트(dvh)를 줄이지 않고, 키보드에 가린 입력칸이 보이도록 페이지를
- * 위로 밀어 올린다. 입력칸이 화면 맨 아래에 있던 배치에서는 그때 문제가 화면 밖으로 나가서, 문제를 보려고
- * 위로 스크롤해야 했다. 키보드를 연 채 보이는 높이를 400pt 로 본다(가정 — 아이폰 14 사파리 약 460, SE 약 380).
- * 레이아웃 높이가 844(아이폰: 줄지 않음)든 400(안드로이드: 줄어듦)이든 입력하는 동안 봐야 하는 것이 그 안에 있어야 한다.
+ * 아이폰은 키보드가 올라와도 레이아웃 높이(dvh)를 줄이지 않고 보이는 영역(visualViewport)만 줄인다.
+ * 그래서 풀이 화면은 보이는 영역에 맞춰 그리고 입력칸을 그 맨 아래(키보드 바로 위)에 붙인다.
+ * 키보드를 연 채 보이는 높이를 400pt 로 본다(가정 — 아이폰 14 사파리 약 460, SE 약 380).
  */
 const VISIBLE_ABOVE_KEYBOARD = 400;
+
+/** 크로미움에는 화면 키보드가 없어서, 레이아웃 높이는 두고 보이는 영역만 줄인 아이폰 상태를 흉내 낸다. */
+async function fakeKeyboard(page: P, visible: number) {
+  await page.addInitScript((h) => {
+    const vv = new EventTarget();
+    const props: Record<string, () => number> = {
+      height: () => h,
+      width: () => window.innerWidth,
+      offsetTop: () => 0,
+      offsetLeft: () => 0,
+      pageTop: () => window.scrollY,
+      pageLeft: () => window.scrollX,
+      scale: () => 1,
+    };
+    for (const [name, get] of Object.entries(props)) Object.defineProperty(vv, name, { get });
+    Object.defineProperty(window, "visualViewport", { configurable: true, get: () => vv });
+  }, visible);
+}
+
+type Box = { x: number; y: number; width: number; height: number };
+const boxOf = async (loc: import("@playwright/test").Locator): Promise<Box> => (await loc.boundingBox())!;
+const centerY = (b: Box) => b.y + b.height / 2;
 
 test.describe("키보드가 열린 화면", () => {
   test.beforeEach(async () => {
     await seedTestable(WORDS);
   });
 
-  for (const layoutHeight of [844, VISIBLE_ABOVE_KEYBOARD]) {
-    test(`레이아웃 높이 ${layoutHeight}: 문제 · 입력칸 · 미리보기 · 판정이 키보드 위 ${VISIBLE_ABOVE_KEYBOARD}pt 안에 있다`, async ({
+  const cases = [
+    // 아이폰: 레이아웃은 844 그대로, 보이는 영역만 400. 키보드가 열린 것으로 보고 한자를 입력칸 쪽으로 내린다.
+    { name: "아이폰처럼 보이는 영역만 줄면(844 중 400)", layout: 844, keyboard: true },
+    // 안드로이드 크롬처럼 레이아웃까지 줄어든 경우. 키보드가 열렸는지 알 수 없으니 한자는 가운데에 둔다.
+    { name: "레이아웃까지 400 으로 줄면", layout: VISIBLE_ABOVE_KEYBOARD, keyboard: false },
+  ];
+
+  for (const c of cases) {
+    test(`${c.name}: 입력칸이 키보드 위에 붙고, 판정이 나오거나 다음 문제로 넘어가도 한자가 움직이지 않는다`, async ({
       page,
     }) => {
-      await page.setViewportSize({ width: 390, height: layoutHeight });
+      await page.setViewportSize({ width: 390, height: c.layout });
+      if (c.keyboard) await fakeKeyboard(page, VISIBLE_ABOVE_KEYBOARD);
       await startFromHome(page);
 
       const inView = async (what: string, loc: import("@playwright/test").Locator) => {
-        const box = (await loc.boundingBox())!;
+        const box = await boxOf(loc);
         expect(box.y, `${what} 위쪽`).toBeGreaterThanOrEqual(0);
         expect(box.y + box.height, `${what} 아래쪽`).toBeLessThanOrEqual(VISIBLE_ABOVE_KEYBOARD);
       };
 
-      // 입력하는 동안: 문제, 입력칸, 미리보기, 제출 버튼. 틀린 답을 치면 판정이 가장 길다.
+      // 입력하는 동안: 문제, 입력칸, 미리보기, 제출 버튼이 키보드 위에 있다. 입력칸은 그 맨 아래에 붙는다.
       const surface = (await surfaceOf(page).innerText()).trim();
       await answerBox(page).fill(TYPE[surface].wrong ?? "ちがう");
       await expect(page.getByTestId("reading-preview")).toBeVisible();
@@ -634,12 +663,28 @@ test.describe("키보드가 열린 화면", () => {
       await inView("입력칸", answerBox(page));
       await inView("미리보기", page.getByTestId("reading-preview"));
       await inView("제출 버튼", page.getByRole("button", { name: /제출/ }));
+      const input = await boxOf(answerBox(page));
+      expect(VISIBLE_ABOVE_KEYBOARD - (input.y + input.height), "입력칸과 키보드 사이").toBeLessThan(24);
 
-      // 제출한 뒤: 틀렸다는 표시와 정답 대조(내 답 · 정답)를 스크롤 없이 읽는다. 입력칸은 읽기 전용이 되어
-      // 더 칠 것이 없고, 다음 버튼은 Enter 로 대신하므로 이 높이 안에 있을 필요가 없다.
+      // 한자 위치: 키보드가 열렸으면 문제 칸 가운데보다 아래(입력칸 쪽), 아니면 가운데.
+      const stage = await boxOf(page.getByTestId("question-stage"));
+      const kanji = await boxOf(surfaceOf(page));
+      if (c.keyboard) expect(centerY(kanji), "한자가 가운데보다 아래").toBeGreaterThan(centerY(stage) + 8);
+      else expect(Math.abs(centerY(kanji) - centerY(stage)), "한자가 가운데").toBeLessThan(4);
+
+      // 제출한 뒤: 판정(맞음 · 틀림, 읽기 · 뜻, 대조)이 스크롤 없이 읽히고, 한자는 제자리다.
       await answerBox(page).press("Enter");
       await expect(page.getByTestId("verdict")).toBeVisible();
       await inView("판정", page.getByTestId("verdict"));
+      expect((await boxOf(surfaceOf(page))).y, "판정 뒤 한자").toBeCloseTo(kanji.y, 0);
+
+      // 다음 문제: 한자와 입력칸이 같은 자리에 있고 화면이 스크롤되지 않는다.
+      await answerBox(page).press("Enter");
+      await expect(page.getByTestId("verdict")).toHaveCount(0);
+      expect((await boxOf(answerBox(page))).y, "다음 문제의 입력칸").toBeCloseTo(input.y, 0);
+      const nextKanji = await boxOf(surfaceOf(page));
+      expect(centerY(nextKanji), "다음 문제의 한자").toBeCloseTo(centerY(kanji), 0);
+      expect(await page.evaluate(() => window.scrollY), "화면 스크롤").toBe(0);
     });
   }
 });

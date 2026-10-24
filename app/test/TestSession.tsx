@@ -201,7 +201,7 @@ export function TestSession({
   const progress = Math.round((position / total) * 100);
 
   return (
-    <main className="mx-auto flex min-h-dvh max-w-2xl flex-col px-5 py-6">
+    <main className="mx-auto flex min-h-dvh max-w-2xl flex-col px-5 py-4">
       <header className="no-select">
         <div className="flex items-baseline justify-between text-sm text-muted">
           <span>실전 테스트</span>
@@ -214,7 +214,12 @@ export function TestSession({
         </div>
       </header>
 
-      <section className="flex flex-1 flex-col items-center justify-center py-10 text-center">
+      {/*
+        입력칸을 화면 맨 아래에 두지 않고 문제 바로 아래에 붙인다. 아이폰은 키보드가 올라와도 레이아웃 높이(dvh)를
+        줄이지 않고 키보드에 가린 입력칸이 보이게 페이지를 위로 밀어 올린다. 맨 아래에 있으면 그때 문제가
+        화면 밖으로 나가서 위로 스크롤해야 했다. e2e/typing-test.spec.ts 「키보드가 열린 화면」 이 지킨다.
+      */}
+      <section className="flex flex-col items-center py-4 text-center">
         <QuestionFace question={question} verdict={verdict} />
       </section>
 
@@ -258,7 +263,7 @@ export function TestSession({
 
         <button
           onClick={verdict ? next : submit}
-          className="mt-3 w-full rounded-xl bg-accent px-6 py-5 text-lg font-semibold text-accent-fg"
+          className="mt-3 w-full rounded-xl bg-accent px-6 py-4 text-lg font-semibold text-accent-fg"
         >
           {verdict ? "다음" : "제출"} <span className="text-sm font-normal opacity-90">(Enter)</span>
         </button>

@@ -31,7 +31,7 @@ export function DiffLine({ blocks, side }: { blocks: DiffBlock[]; side: "typed" 
 export function QuestionFace({ question, verdict }: { question: TestQuestion; verdict: Verdict }) {
   if (!verdict) {
     return (
-      <div className="flex flex-col items-center gap-8">
+      <div className="flex flex-col items-center gap-5">
         <div className="jp-xl no-select" lang="ja" data-testid="question-surface">
           {question.surface}
         </div>
@@ -41,7 +41,7 @@ export function QuestionFace({ question, verdict }: { question: TestQuestion; ve
   }
 
   return (
-    <div className="flex flex-col items-center gap-6" data-testid="verdict">
+    <div className="flex flex-col items-center gap-4" data-testid="verdict">
       <p className={`text-lg font-semibold ${verdict.correct ? "text-accent" : "text-danger"}`}>
         {verdict.correct ? "맞았습니다" : "틀렸습니다"}
       </p>

@@ -151,7 +151,12 @@ proxy.ts           비밀번호 게이트 (Next 16 에서 middleware 는 proxy �
   (`isMissingSchema`). `/api/test-answers` 는 503 으로 답해 클라이언트가 답을 지우지 않게 한다.
   `e2e/typing-test.spec.ts` 의 「스키마보다 코드가 먼저 올라간 DB」 가 표 · 열 이름을 바꿔 이를 지킨다.
 - IME 확정 Enter(`isComposing` · `keyCode 229`)는 제출이 아니다(`app/test/keys.ts`). 입력칸은 친 그대로
-  두고 가나 변환은 미리보기 줄에만 보여 준다(규칙 6).
+  두고 가나 변환은 미리보기 줄에만 보여 준다(규칙 6). 그래서 아이폰 플릭 입력은 확정 → 제출 → 다음으로
+  Enter 가 3번이다. 확정은 OS 키보드의 몫이고, 제출과 다음 사이는 판정(정답 읽기 · 뜻 · 대조)을 읽는 자리다.
+- **실전 테스트의 입력칸을 화면 맨 아래에 두지 말 것**(`min-h-dvh` 에 `flex-1` 로 밀어 내리는 배치). 아이폰은 키보드가
+  올라와도 `dvh` 를 줄이지 않고, 가린 입력칸이 보이게 페이지를 위로 밀어 올려 문제가 화면 밖으로 나간다.
+  문제 바로 아래에 붙이고, 입력하는 동안 봐야 하는 것(문제 · 입력칸 · 미리보기 · 제출)이 키보드 위 400pt 안에
+  들어오게 한다. `e2e/typing-test.spec.ts` 의 「키보드가 열린 화면」 이 지킨다. 400pt 는 가정이다 — 실기기 미확인.
 
 ## 검증
 
@@ -159,7 +164,7 @@ proxy.ts           비밀번호 게이트 (Next 16 에서 middleware 는 proxy �
 npm test          # 218개 (SRS 전이표, 유형 분포, 큐, 읽기 변환, 파서, 카드 누출, 오답 검증, 백업 대상, 되돌리기 창, 채점 복구, 풀이 범위,
                   #       저장 버튼 규칙, 실전 테스트: 답 판정 · 음절 대조 · 출제 선택 · 출현 · 문제 누출 · IME Enter · 영수증 열쇠)
 npm run test:db   # 34개 (실제 Neon 왕복) — 운영 DB 로 붙는다. 실전 테스트는 이 명령으로 검증하지 않았다
-npm run test:e2e  # 55개 (브라우저, 격리 DB)
+npm run test:e2e  # 57개 (브라우저, 격리 DB)
 npm run typecheck
 npx eslint .
 npm run build

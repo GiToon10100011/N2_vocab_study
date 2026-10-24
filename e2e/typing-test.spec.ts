@@ -599,3 +599,47 @@ test.describe("실전 테스트 설정", () => {
     expect(await testSize()).toBe(100);
   });
 });
+
+/**
+ * 아이폰은 키보드가 올라와도 레이아웃 뷰포트(dvh)를 줄이지 않고, 키보드에 가린 입력칸이 보이도록 페이지를
+ * 위로 밀어 올린다. 입력칸이 화면 맨 아래에 있던 배치에서는 그때 문제가 화면 밖으로 나가서, 문제를 보려고
+ * 위로 스크롤해야 했다. 키보드를 연 채 보이는 높이를 400pt 로 본다(가정 — 아이폰 14 사파리 약 460, SE 약 380).
+ * 레이아웃 높이가 844(아이폰: 줄지 않음)든 400(안드로이드: 줄어듦)이든 입력하는 동안 봐야 하는 것이 그 안에 있어야 한다.
+ */
+const VISIBLE_ABOVE_KEYBOARD = 400;
+
+test.describe("키보드가 열린 화면", () => {
+  test.beforeEach(async () => {
+    await seedTestable(WORDS);
+  });
+
+  for (const layoutHeight of [844, VISIBLE_ABOVE_KEYBOARD]) {
+    test(`레이아웃 높이 ${layoutHeight}: 문제 · 입력칸 · 미리보기 · 판정이 키보드 위 ${VISIBLE_ABOVE_KEYBOARD}pt 안에 있다`, async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width: 390, height: layoutHeight });
+      await startFromHome(page);
+
+      const inView = async (what: string, loc: import("@playwright/test").Locator) => {
+        const box = (await loc.boundingBox())!;
+        expect(box.y, `${what} 위쪽`).toBeGreaterThanOrEqual(0);
+        expect(box.y + box.height, `${what} 아래쪽`).toBeLessThanOrEqual(VISIBLE_ABOVE_KEYBOARD);
+      };
+
+      // 입력하는 동안: 문제, 입력칸, 미리보기, 제출 버튼. 틀린 답을 치면 판정이 가장 길다.
+      const surface = (await surfaceOf(page).innerText()).trim();
+      await answerBox(page).fill(TYPE[surface].wrong ?? "ちがう");
+      await expect(page.getByTestId("reading-preview")).toBeVisible();
+      await inView("문제", surfaceOf(page));
+      await inView("입력칸", answerBox(page));
+      await inView("미리보기", page.getByTestId("reading-preview"));
+      await inView("제출 버튼", page.getByRole("button", { name: /제출/ }));
+
+      // 제출한 뒤: 틀렸다는 표시와 정답 대조(내 답 · 정답)를 스크롤 없이 읽는다. 입력칸은 읽기 전용이 되어
+      // 더 칠 것이 없고, 다음 버튼은 Enter 로 대신하므로 이 높이 안에 있을 필요가 없다.
+      await answerBox(page).press("Enter");
+      await expect(page.getByTestId("verdict")).toBeVisible();
+      await inView("판정", page.getByTestId("verdict"));
+    });
+  }
+});

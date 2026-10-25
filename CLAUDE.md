@@ -159,7 +159,8 @@ proxy.ts           비밀번호 게이트 (Next 16 에서 middleware 는 proxy �
   문제 칸은 「읽기 · 표기 · 뜻」 세 줄 자리를, 판정 줄은 두 줄 자리를 늘 잡아 둔다 — 판정이 나오거나 다음 문제로 넘어가도
   표기와 입력칸이 움직이지 않고 화면에 스크롤이 없다. 키보드가 열리면 표기를 가운데보다 아래(위아래 빈칸 2:1,
   `app/globals.css` 의 `.test-stage[data-keyboard]`)에 둔다. 입력칸 테두리의 초록 · 붉은색은 판정에만 쓴다.
-  `e2e/typing-test.spec.ts` 「키보드가 열린 화면」 이 `visualViewport` 를 흉내 내 지킨다. 키보드 위 400pt 는 가정이다 — 실기기 미확인.
+  `e2e/typing-test.spec.ts` 「키보드가 열린 화면」 이 `visualViewport` 를 흉내 내 지킨다(키보드 위 400pt 는 흉내 낸 값이다).
+  이 배치는 아이폰 실기기에서 확인했다(2026-10-25).
 
 ## 검증
 

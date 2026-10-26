@@ -8,6 +8,7 @@ import {
   MISTAKE_TEXT_MAX,
   isBlankMistake,
   joinChoices,
+  keptAfterSave,
   splitChoices,
   validateMistake,
   type MistakeInput,
@@ -200,15 +201,30 @@ describe("오답 칸이 비었는가", () => {
   });
 
   it("이어받은 문항 번호 그대로면 아직 안 적은 것이다 — 번호는 직전 오답에서 채워져 있다", () => {
-    expect(isBlankMistake({ ...blank, ref: "19" }, "19")).toBe(true);
-    expect(isBlankMistake({ ...blank, ref: " 19 " }, "19")).toBe(true);
+    expect(isBlankMistake({ ...blank, ref: "19" }, { ref: "19" })).toBe(true);
+    expect(isBlankMistake({ ...blank, ref: " 19 " }, { ref: "19" })).toBe(true);
   });
 
   it("번호를 고쳤거나 다른 칸이 적혀 있으면 이어받은 번호가 있어도 채워졌다", () => {
-    expect(isBlankMistake({ ...blank, ref: "20" }, "19")).toBe(false);
-    expect(isBlankMistake({ ...blank, ref: "19", why: "x" }, "19")).toBe(false);
+    expect(isBlankMistake({ ...blank, ref: "20" }, { ref: "19" })).toBe(false);
+    expect(isBlankMistake({ ...blank, ref: "19", why: "x" }, { ref: "19" })).toBe(false);
     // 이어받은 번호를 알려 주지 않으면 번호도 내용이다.
     expect(isBlankMistake({ ...blank, ref: "19" })).toBe(false);
+  });
+
+  it("남겨 둔 선택지 · 이유 그대로면 아직 안 적은 것이다 — 줄 앞뒤 공백과 빈 줄은 따지지 않는다", () => {
+    const kept = { ref: "19", question: "去年\n去年に", why: "쉼표" };
+    expect(isBlankMistake({ ...blank, ...kept }, kept)).toBe(true);
+    expect(isBlankMistake({ ...blank, ...kept, question: " 去年 \n\n去年に\n", why: " 쉼표 " }, kept)).toBe(true);
+  });
+
+  it("남겨 둔 칸을 고쳤거나 고른 답 · 정답을 적으면 채워졌다", () => {
+    const kept = { ref: "19", question: "去年\n去年に", why: "쉼표" };
+    const form = { ...blank, ...kept };
+    expect(isBlankMistake({ ...form, question: "去年\n去年に\n来年" }, kept), "선택지").toBe(false);
+    expect(isBlankMistake({ ...form, why: "쉼표 유무" }, kept), "이유").toBe(false);
+    expect(isBlankMistake({ ...form, chosen: "去年に" }, kept), "고른 답").toBe(false);
+    expect(isBlankMistake({ ...form, answer: "去年" }, kept), "정답").toBe(false);
   });
 
   it("validateMistake 가 empty 라고 하는 것과 어긋나지 않는다", () => {
@@ -218,5 +234,47 @@ describe("오답 칸이 비었는가", () => {
       reason: "empty",
     });
     expect(isBlankMistake({ ref: "", question: "", chosen: "", answer: "", why: "" })).toBe(true);
+  });
+});
+
+describe("오답을 저장한 뒤 폼에 남기는 칸", () => {
+  const saved = {
+    ref: "19",
+    question: "去年\n去年に",
+    why: "쉼표 유무에 따라 다를 거라고 생각했다",
+    category: "개념 부족" as const,
+  };
+
+  it("마스터1500 은 문항 번호 · 선택지 · 이유 · 분류를 남기고, 고른 답과 정답은 비운다", () => {
+    expect(keptAfterSave({ ...saved, source: "master1500" })).toEqual({
+      ref: "19",
+      question: "去年\n去年に",
+      why: "쉼표 유무에 따라 다를 거라고 생각했다",
+      category: "개념 부족",
+    });
+  });
+
+  it("문법 · 독해는 문항 번호만 남긴다 — 분류는 문항마다 새로 판단한다", () => {
+    for (const source of ["grammar", "reading"] as const) {
+      expect(keptAfterSave({ ...saved, source }), source).toEqual({
+        ref: "19",
+        question: "",
+        why: "",
+        category: "",
+      });
+    }
+  });
+
+  it("비어 있던 칸은 빈 문자열로 남긴다", () => {
+    expect(
+      keptAfterSave({ source: "master1500", ref: null, question: null, why: null, category: "회상 실패" }),
+    ).toEqual({ ref: "", question: "", why: "", category: "회상 실패" });
+  });
+
+  it("남긴 칸만 있는 폼은 비었다 — 다시 저장을 눌러도 같은 오답이 또 들어가지 않는다", () => {
+    for (const source of MISTAKE_SOURCES) {
+      const kept = keptAfterSave({ ...saved, source });
+      expect(isBlankMistake({ ...kept, chosen: "", answer: "" }, kept), source).toBe(true);
+    }
   });
 });

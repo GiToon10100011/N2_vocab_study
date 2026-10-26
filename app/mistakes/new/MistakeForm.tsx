@@ -11,8 +11,10 @@ import {
   MISTAKE_TEXT_MAX,
   isBlankMistake,
   joinChoices,
+  keptAfterSave,
   splitChoices,
   validateMistake,
+  type KeptFields,
   type Mistake,
   type MistakeInvalid,
   type MistakeSource,
@@ -56,6 +58,9 @@ const ERROR_TEXT: Record<MistakeInvalid, string> = {
   too_long: `너무 깁니다. 문항 번호는 ${MISTAKE_REF_MAX}자, 나머지 칸은 ${MISTAKE_TEXT_MAX}자까지입니다.`,
 };
 
+/** 직전 오답에서 남겨 둔 칸만 있는데 저장을 눌렀다. 그대로 보내면 같은 오답이 한 번 더 들어간다. */
+const NOTHING_NEW_TEXT = "직전 오답에서 남겨 둔 그대로라 저장하지 않았습니다. 고른 답이나 정답을 적어주세요.";
+
 const RANGE_ERROR_TEXT: Record<StudyRangeInvalid, string> = {
   source: "출처를 골라주세요.",
   number: `시작 번호와 끝 번호를 1~${STUDY_RANGE_MAX} 사이의 숫자로 적어주세요.`,
@@ -95,10 +100,10 @@ export function MistakeForm({
   const [error, setError] = useState<string | null>(null);
 
   /**
-   * 칸에 이어받아 채워 둔 문항 번호. 이 번호 그대로이고 분류도 안 골랐다면 오답을 적는 중이 아니다 —
-   * 번호만 남은 채로 범위를 저장하려는 것이다.
+   * 직전 오답에서 남겨 둔 칸(keptAfterSave). 남은 값 그대로이고 분류도 그대로라면 오답을 적는 중이 아니다 —
+   * 남은 칸을 둔 채로 범위를 저장하려는 것이다. 처음 열 때는 직전 오답의 문항 번호만 이어받는다.
    */
-  const carriedRef = useRef(initialRef);
+  const kept = useRef<KeptFields>({ ref: initialRef, question: "", why: "", category: "" });
   const inputs = useRef<Partial<Record<FieldKey, HTMLInputElement | null>>>({});
   const categoryRef = useRef<HTMLSelectElement>(null);
   const choiceInputs = useRef(new Map<number, HTMLInputElement>());
@@ -112,7 +117,7 @@ export function MistakeForm({
   /**
    * 저장 버튼 하나가 오답과 풀이 범위를 함께 다룬다(무엇을 저장할지는 planFormSave 가 정한다).
    * 둘은 따로 실패할 수 있다. 오답이 먼저 저장되고 범위가 실패하면 오답은 남고 범위만 다시 누르면 된다 —
-   * 저장된 오답 칸은 비워지므로 다시 눌러도 오답은 두 번 가지 않는다.
+   * 저장 뒤 남겨 둔 칸은 내용으로 세지 않으므로 다시 눌러도 오답은 두 번 가지 않는다.
    */
   async function save() {
     if (saving) return;
@@ -125,11 +130,11 @@ export function MistakeForm({
     };
     // 표가 없는 DB 에서는 범위 칸이 없으므로 범위를 다루지 않는다.
     const rangeText = ranges ? range : { from: "", to: "" };
-    // 분류를 골랐다면 오답을 적으려는 것이다. 문항 번호는 직전 오답에서 이어받아 채워져 있을 뿐이다.
-    const plan = planFormSave({
-      mistakeBlank: !input.category && isBlankMistake(input, carriedRef.current),
-      ...rangeText,
-    });
+    // 분류를 새로 골랐다면 오답을 적으려는 것이다. 남겨 둔 칸은 직전 오답에서 채워져 있을 뿐이다.
+    const mistakeBlank =
+      (!input.category || input.category === kept.current.category) &&
+      isBlankMistake(input, kept.current);
+    const plan = planFormSave({ mistakeBlank, ...rangeText });
 
     // 범위를 검증한다. 이미 저장된 같은 값은 다시 보내지 않는다.
     let rangeToSave: { from_no: number; to_no: number } | null = null;
@@ -165,6 +170,12 @@ export function MistakeForm({
         else inputs.current.ref?.focus();
         return;
       }
+      // 남겨 둔 칸만으로 검증을 통과했다(마스터1500). 새로 적은 것이 없으니 같은 오답을 또 넣지 않는다.
+      if (mistakeBlank) {
+        setError(NOTHING_NEW_TEXT);
+        inputs.current.chosen?.focus();
+        return;
+      }
     } else if (rangeInvalid) {
       setError(null);
       setRangeError(RANGE_ERROR_TEXT[rangeInvalid]);
@@ -184,15 +195,17 @@ export function MistakeForm({
             return;
           }
           setSaved((s) => [res.mistake, ...s]);
-          // 출처와 문항 번호는 남긴다. 같은 회차를 이어서 적으므로 번호 끝만 고치면 된다.
-          carriedRef.current = res.mistake.ref ?? "";
-          setValues({ ...EMPTY, ref: carriedRef.current });
-          // 선택지 없이 넘긴 문항이었다면(줄이 0개) 다음 문항도 줄 없이 시작한다. 문법 회상처럼
-          // 선택지가 없는 문항이 이어질 때 Enter 한 번을 아낀다.
-          const fresh: ChoiceRow = { id: nextChoiceId.current++, text: "" };
-          setChoices((c) => (c.length === 0 ? [] : [fresh]));
-          // 분류는 문항마다 새로 판단해야 하므로 비운다.
-          setCategory("");
+          // 무엇을 남길지는 출처가 정한다(keptAfterSave). 고른 답과 정답은 늘 비운다.
+          const next = keptAfterSave(res.mistake);
+          kept.current = next;
+          setValues({ ...EMPTY, ref: next.ref, why: next.why });
+          // 선택지를 남기면 친 줄 그대로 둔다. 남기지 않을 때, 선택지 없이 넘긴 문항이었다면(줄이 0개)
+          // 다음 문항도 줄 없이 시작한다. 문법 회상처럼 선택지가 없는 문항이 이어질 때 Enter 한 번을 아낀다.
+          if (!next.question) {
+            const fresh: ChoiceRow = { id: nextChoiceId.current++, text: "" };
+            setChoices((c) => (c.length === 0 ? [] : [fresh]));
+          }
+          setCategory(next.category);
           if (plan.rangeSkipped) setRangeNote(RANGE_SKIPPED_TEXT[plan.rangeSkipped]);
         } catch {
           setError("오답 저장에 실패했습니다. 네트워크를 확인해주세요.");
@@ -426,7 +439,7 @@ export function MistakeForm({
         <section className="mt-4 rounded-xl border border-border bg-surface px-4 py-3">
           <p className="text-sm text-muted">
             푼 범위{" "}
-            <span className="text-xs">· 오답 칸을 비워 두고 저장하면 범위만 저장된다 · 교재마다 하루 한 줄</span>
+            <span className="text-xs">· 새 오답 없이 저장하면 범위만 저장된다 · 교재마다 하루 한 줄</span>
           </p>
           <div className="mt-2 flex items-center gap-2">
             {rangeInput("from")}

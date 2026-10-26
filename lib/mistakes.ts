@@ -104,25 +104,53 @@ export function splitChoices(question: string | null | undefined): string[] {
     .filter(Boolean);
 }
 
+/** 오답을 저장한 뒤 폼에 남겨 두는 칸. 비운 칸은 "" 이다. 고른 답과 정답은 늘 비우므로 없다. */
+export interface KeptFields {
+  ref: string;
+  question: string;
+  why: string;
+  category: string;
+}
+
+/**
+ * 오답을 저장한 뒤 다음 오답을 적을 폼에 남길 칸. 출처는 폼이 따로 쥐고 있어 늘 남는다.
+ * 문항 번호는 늘 남긴다 — 같은 회차를 이어 적으므로 번호 끝만 고치면 된다.
+ * 마스터1500 은 선택지 · 이유 · 분류도 남기고 고른 답과 정답만 비운다(사용자 요청).
+ * 그 밖의 출처는 분류를 문항마다 새로 판단하므로 번호만 남긴다.
+ */
+export function keptAfterSave(
+  saved: Pick<MistakeDraft, "source" | "ref" | "question" | "why" | "category">,
+): KeptFields {
+  const keepAll = saved.source === "master1500";
+  return {
+    ref: saved.ref ?? "",
+    question: keepAll ? (saved.question ?? "") : "",
+    why: keepAll ? (saved.why ?? "") : "",
+    category: keepAll ? saved.category : "",
+  };
+}
+
 /**
  * 오답 칸이 비었는가. 문항 번호와 내용 칸(선택지 · 고른 답 · 정답 · 이유)이 모두 공백이면 비었다.
  * 분류와 출처는 내용이 아니다 — validateMistake 가 empty 로 막는 것과 같은 기준이다.
  * 저장 버튼 하나가 「오답을 저장할지, 범위만 저장할지」 가를 때 쓴다.
  *
- * 폼은 문항 번호를 직전 오답에서 이어받아 채워 둔다(같은 회차를 이어 적으므로). 번호만 남은 폼을
- * 채워졌다고 하면 범위만 저장하려는 때가 없어지므로, 이어받은 번호(carriedRef) 그대로인 번호는 내용으로 세지 않는다.
+ * 폼은 직전 오답의 칸 일부를 남겨 둔다(keptAfterSave). 남은 칸만 있는 폼을 채워졌다고 하면 범위만 저장하려는
+ * 때가 없어지고, 다시 누른 저장이 같은 오답을 한 번 더 넣는다. 그래서 남겨 둔 값(kept) 그대로인 칸은 내용으로 세지 않는다.
  */
 export function isBlankMistake(
   input: Pick<MistakeInput, "ref" | "question" | "chosen" | "answer" | "why">,
-  carriedRef?: string,
+  kept: Partial<Pick<KeptFields, "ref" | "question" | "why">> = {},
 ): boolean {
-  const ref = text(input.ref);
+  const choices = (q: unknown) => joinChoices(splitChoices(text(q))) || null;
+  // 비었거나 남겨 둔 값 그대로면 새로 적은 것이 아니다.
+  const unchanged = (typed: string | null, left: string | null) => typed === null || typed === left;
   return (
-    (ref === null || ref === text(carriedRef)) &&
-    (joinChoices(splitChoices(text(input.question))) || null) === null &&
+    unchanged(text(input.ref), text(kept.ref)) &&
+    unchanged(choices(input.question), choices(kept.question)) &&
     text(input.chosen) === null &&
     text(input.answer) === null &&
-    text(input.why) === null
+    unchanged(text(input.why), text(kept.why))
   );
 }
 

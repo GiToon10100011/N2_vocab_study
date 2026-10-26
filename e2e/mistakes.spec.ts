@@ -96,6 +96,8 @@ test.describe("오답 기록", () => {
   }) => {
     await page.setViewportSize({ width: 390, height: 844 }); // 폰 크기
     await page.goto("/mistakes/new");
+    // 저장 뒤 선택지를 비우는 출처에서 본다. 마스터1500 은 선택지를 남긴다(아래 테스트).
+    await page.getByRole("button", { name: "문법" }).click();
     const ref = page.getByLabel("문항 번호");
     await ref.fill("7");
     await ref.press("Enter");
@@ -134,7 +136,7 @@ test.describe("오답 기록", () => {
 
     await page.getByLabel("분류").selectOption("문법 구별 실패");
     await page.getByRole("button", { name: "저장", exact: true }).click();
-    await expect(page.getByRole("status")).toContainText("마스터1500 7 · 문법 구별 실패");
+    await expect(page.getByRole("status")).toContainText("문법 7 · 문법 구별 실패");
     expect((await mistakeRows()).map((r) => r.question)).toEqual(["あ\nう\nえ"]);
 
     // 선택지가 없는 문항은 빈 줄에서 Enter 로 넘긴다.
@@ -147,13 +149,78 @@ test.describe("오답 기록", () => {
     await expect(choices(page)).toHaveCount(0);
     await page.getByLabel("분류").selectOption("회상 실패");
     await page.getByRole("button", { name: "저장", exact: true }).click();
-    await expect(page.getByRole("status")).toContainText("마스터1500 8 · 회상 실패");
+    await expect(page.getByRole("status")).toContainText("문법 8 · 회상 실패");
     expect((await mistakeRows()).map((r) => r.question)).toEqual(["あ\nう\nえ", null]);
 
     // 선택지 없이 넘긴 다음에는 줄 없이 시작해서, 문항 번호에서 바로 고른 답으로 간다.
     await expect(choices(page)).toHaveCount(0);
     await ref.press("Enter");
     await expect(page.getByLabel("고른 답")).toBeFocused();
+  });
+
+  test("마스터1500 은 저장한 뒤 고른 답과 정답만 비우고, 새로 적은 것 없이 다시 누르면 저장하지 않는다", async ({
+    page,
+  }) => {
+    await page.goto("/mistakes/new");
+    await page.getByRole("button", { name: "마스터1500" }).click();
+    const ref = page.getByLabel("문항 번호");
+    const chosen = page.getByLabel("고른 답");
+    const answer = page.getByLabel("정답");
+    const why = page.getByLabel("왜 틀렸다고");
+    const category = page.getByLabel("분류");
+    await page.getByLabel("시작 번호").fill("11");
+    await page.getByLabel("끝 번호").fill("20");
+    await ref.fill("13");
+    await choice(page, 1).fill("去年");
+    await page.getByRole("button", { name: "+ 선택지 추가" }).click();
+    await choice(page, 2).fill("去年に");
+    await chosen.fill("去年に");
+    await answer.fill("去年");
+    await why.fill("쉼표 유무에 따라 다를 거라고 생각했다");
+    await category.selectOption("개념 부족");
+    await page.getByRole("button", { name: "저장", exact: true }).click();
+    await expect(page.getByRole("status")).toContainText("저장했습니다 · 마스터1500 13 · 개념 부족");
+
+    // 문항 번호 · 선택지 · 이유 · 분류 · 푼 범위는 남고, 고른 답과 정답만 비워진다.
+    await expect(ref).toBeFocused();
+    await expect(ref).toHaveValue("13");
+    await expect(choices(page)).toHaveCount(2);
+    await expect(choice(page, 1)).toHaveValue("去年");
+    await expect(choice(page, 2)).toHaveValue("去年に");
+    await expect(why).toHaveValue("쉼표 유무에 따라 다를 거라고 생각했다");
+    await expect(category).toHaveValue("개념 부족");
+    await expect(page.getByLabel("시작 번호")).toHaveValue("11");
+    await expect(page.getByLabel("끝 번호")).toHaveValue("20");
+    await expect(chosen).toHaveValue("");
+    await expect(answer).toHaveValue("");
+
+    // 남은 칸만 둔 채 다시 누르면 같은 오답을 또 넣지 않고 알린다.
+    await page.getByRole("button", { name: "저장", exact: true }).click();
+    await expect(page.getByText("직전 오답에서 남겨 둔 그대로라 저장하지 않았습니다.", { exact: false })).toBeVisible();
+    await expect(chosen).toBeFocused();
+
+    // 고른 답과 정답만 적으면 나머지는 남은 값 그대로 저장된다.
+    await chosen.fill("来年");
+    await answer.fill("去年");
+    await page.getByRole("button", { name: "저장", exact: true }).click();
+    await expect(page.getByText("방금 적은 오답 2건")).toBeVisible();
+    const row = {
+      source: "master1500",
+      ref: "13",
+      question: "去年\n去年に",
+      answer: "去年",
+      why: "쉼표 유무에 따라 다를 거라고 생각했다",
+      category: "개념 부족",
+      study_day: TODAY,
+      resolved_at: null,
+    };
+    expect(await mistakeRows()).toEqual([
+      { ...row, chosen: "去年に" },
+      { ...row, chosen: "来年" },
+    ]);
+    expect(await rangeRows()).toEqual([
+      { source: "master1500", study_day: TODAY, from_no: 11, to_no: 20 },
+    ]);
   });
 
   test("분류를 고르지 않으면 저장하지 않고, 어제 푼 문제는 어제 날짜로 들어간다", async ({
@@ -421,7 +488,8 @@ test.describe("저장 버튼 하나", () => {
     await expect(status(page)).toContainText("저장했습니다 · 마스터1500 13");
     await expect(page.getByLabel("문항 번호")).toHaveValue("13");
 
-    // 번호만 남았고 분류도 안 골랐다. 오답을 적는 중이 아니라 범위를 적는 중이다.
+    // 번호와 분류는 직전 오답에서 남겨 둔 그대로다. 오답을 적는 중이 아니라 범위를 적는 중이다.
+    await expect(page.getByLabel("분류")).toHaveValue("회상 실패");
     await from(page).fill("11");
     await to(page).fill("20");
     await saveButton(page).click();
@@ -498,7 +566,7 @@ test.describe("저장 버튼 하나", () => {
     expect((await mistakeRows()).map((r) => r.ref)).toEqual(["13"]);
     expect(await rangeRows()).toEqual([]);
 
-    // 다시 누르면 저장된 오답은 다시 보내지 않고(칸이 비워졌다) 범위만 보낸다.
+    // 다시 누르면 저장된 오답은 다시 보내지 않고(남은 칸은 직전 오답 그대로다) 범위만 보낸다.
     act.block.range = false;
     await saveButton(page).click();
     await expect(todayRange(page, "마스터1500 11~20번 (10문항)")).toBeVisible();

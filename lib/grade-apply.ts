@@ -90,15 +90,11 @@ export function reviewInsertQuery(
 ): Query {
   const width = opts.test ? 6 : 5;
   const logParams: unknown[] = [];
-  const logRows = plan.map((item, i) => {
+  // 항목마다 로그 한 줄이 기본이고, 뜻 답이 딸린 테스트 항목은 읽기 줄 다음에 뜻 줄이 이어진다.
+  const lines = plan.flatMap((item) => [item.log, ...(item.extraLogs ?? [])].map((log) => ({ item, log })));
+  const logRows = lines.map(({ item, log }, i) => {
     const base = i * width;
-    logParams.push(
-      item.wordId,
-      item.log.promptType,
-      item.log.correct,
-      item.log.retry,
-      item.log.practice,
-    );
+    logParams.push(item.wordId, log.promptType, log.correct, log.retry, log.practice);
     if (opts.test) logParams.push(true);
     return `($${base + 1}::uuid, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}${
       opts.test ? `, $${base + 6}` : ""

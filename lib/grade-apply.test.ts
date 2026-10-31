@@ -70,6 +70,24 @@ describe("리뷰 로그", () => {
     expect(q.text).toContain("(word_id, prompt_type, correct, in_session_retry, practice, test)");
     expect(q.params).toEqual(["w-0123456789", "s2r", true, false, false, true]);
   });
+
+  it("뜻 로그가 딸린 항목은 한 문장에 읽기 줄 다음 뜻 줄을 넣는다", () => {
+    const meaning = { promptType: "s2m" as const, correct: false, retry: false, practice: false, test: true };
+    const q = rec(
+      reviewInsertQuery(
+        fakeSql,
+        [item({ log: { ...log, test: true }, extraLogs: [meaning] }), item({ wordId: "w-9876543210" })],
+        { test: true },
+      ),
+    );
+    expect(q.params).toEqual([
+      "w-0123456789", "s2r", true, false, false, true,
+      "w-0123456789", "s2m", false, false, false, true,
+      "w-9876543210", "s2r", true, false, false, true,
+    ]);
+    // 값 자리표시는 줄마다 이어 붙는다: ($1..$6), ($7..$12), ($13..$18)
+    expect(q.text).toContain("($13::uuid, $14, $15, $16, $17, $18)");
+  });
 });
 
 describe("단어 갱신", () => {

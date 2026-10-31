@@ -188,6 +188,13 @@ create table if not exists typing_test_items (
 -- 단어별 테스트 이력(재시험 · 통과 · 읽기 주의)을 시간순으로 읽는다
 create index if not exists typing_test_items_word on typing_test_items (word_id, answered_at);
 
+-- 뜻을 함께 묻게 된 뒤의 답. 읽기만 묻던 때의 답은 두 열이 비어 있다.
+-- meaning_credit: 1 정답, 0.5 부분 정답(맞힌 것으로 친다), 0 오답. correct 는 읽기만 뜻한다.
+-- 친 뜻(typed_meaning)도 공개 백업에 넣지 않는다.
+alter table typing_test_items add column if not exists typed_meaning text;
+alter table typing_test_items add column if not exists meaning_credit real
+  constraint typing_test_items_meaning_credit check (meaning_credit in (0, 0.5, 1));
+
 -- 실전 테스트 한 번의 문제 수. 한 번에 20분을 넘기지 않게 사용자가 조정한다.
 alter table settings add column if not exists test_size smallint not null default 40
   constraint settings_test_size check (test_size between 10 and 100);

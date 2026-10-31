@@ -1,4 +1,5 @@
 import { db, isMissingSchema } from "./db";
+import { MEANING_PASS_MIN } from "./meaning-answer";
 import { TEST_SIZE_DEFAULT, normalizeTestSize } from "./typing-test";
 import type { AppSettings, PromptType, StudyDayGroup, TodayCounts, Word } from "./types";
 import type { Mistake, MistakeDraft } from "./mistakes";
@@ -471,9 +472,12 @@ export async function fetchTestWrongToday(
 ): Promise<Set<string>> {
   if (ids.length === 0) return new Set();
   try {
+    // 읽기를 틀렸거나 뜻 점수가 모자라면 그날 테스트에서 틀린 것이다. 뜻 열은 to_jsonb 로 읽는다(열이 없는 DB 대비).
     const rows = (await db().query(
-      `select word_id from typing_test_items
-        where word_id = any($1::uuid[]) and correct = false
+      `select word_id from typing_test_items i
+        where word_id = any($1::uuid[])
+          and (correct = false
+               or coalesce((to_jsonb(i) ->> 'meaning_credit')::float8, 1) < ${MEANING_PASS_MIN})
           and answered_at >= $2::timestamptz and answered_at < $3::timestamptz`,
       [
         ids,
@@ -491,13 +495,14 @@ export async function fetchTestWrongToday(
 export interface TestWordRow extends SrsRow {
   surface: string;
   reading: string;
+  meaning_ko: string;
 }
 
-/** 테스트 답을 서버가 다시 채점하는 데 필요한 단어 행: 표기 · 읽기 + SRS 상태. */
+/** 테스트 답을 서버가 다시 채점하는 데 필요한 단어 행: 표기 · 읽기 · 뜻 + SRS 상태. */
 export async function fetchTestWordRows(ids: string[]): Promise<TestWordRow[]> {
   if (ids.length === 0) return [];
   const rows = await db().query(
-    `select id, surface, reading, stage, correct_count, wrong_count, streak, last_wrong_type
+    `select id, surface, reading, meaning_ko, stage, correct_count, wrong_count, streak, last_wrong_type
        from words where id = any($1::uuid[])`,
     [ids],
   );

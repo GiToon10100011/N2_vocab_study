@@ -196,20 +196,32 @@ export function markCaution<T extends { word: { id: string } }>(
 
 const MAX_ANSWERS = 200;
 const MAX_TYPED = 64;
+const MAX_MEANING = 100;
 
-/** /api/test-answers 의 answers. 모양이 맞는 것만, 같은 단어는 첫 답만 받는다. */
-export function parseTestAnswers(raw: unknown): { wordId: string; typed: string }[] {
+/**
+ * /api/test-answers 의 answers. 모양이 맞는 것만, 같은 단어는 첫 답만 받는다.
+ * typedMeaning 은 뜻을 물은 화면이 보낸다. 없거나 모양이 틀리면 키를 두지 않는다 — 읽기만 반영한다
+ * (뜻을 묻지 않던 예전 화면의 요청도 그대로 받아야 한다).
+ */
+export function parseTestAnswers(
+  raw: unknown,
+): { wordId: string; typed: string; typedMeaning?: string }[] {
   if (!Array.isArray(raw)) return [];
-  const out: { wordId: string; typed: string }[] = [];
+  const out: { wordId: string; typed: string; typedMeaning?: string }[] = [];
   const seen = new Set<string>();
   for (const item of raw) {
     if (out.length >= MAX_ANSWERS) break;
     if (typeof item !== "object" || item === null) continue;
-    const { wordId, typed } = item as Record<string, unknown>;
+    const { wordId, typed, typedMeaning } = item as Record<string, unknown>;
     if (typeof wordId !== "string" || wordId.length < 10 || seen.has(wordId)) continue;
     if (typeof typed !== "string" || typed.length === 0 || typed.length > MAX_TYPED) continue;
     seen.add(wordId);
-    out.push({ wordId, typed });
+    const meaning = typeof typedMeaning === "string" ? typedMeaning.trim() : "";
+    out.push(
+      meaning.length > 0 && meaning.length <= MAX_MEANING
+        ? { wordId, typed, typedMeaning: meaning }
+        : { wordId, typed },
+    );
   }
   return out;
 }

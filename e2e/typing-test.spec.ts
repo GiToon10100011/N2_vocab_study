@@ -34,6 +34,14 @@ async function itemRows() {
   );
 }
 
+/** 뜻 답 열. itemRows 와 따로 둔다 — 읽기만 보내는 옛 요청의 기대값에 뜻 열이 섞이지 않게. */
+async function meaningRows() {
+  return sql().query(
+    `select w.surface, i.typed_meaning, i.meaning_credit::float8 as meaning_credit
+       from typing_test_items i join words w on w.id = i.word_id order by w.surface`,
+  );
+}
+
 async function reviewCount(): Promise<number> {
   const rows = (await sql().query(`select count(*)::int as n from reviews where not (prompt_type = 'learn')`)) as {
     n: number;
@@ -45,7 +53,7 @@ async function testStateRows() {
   return sql().query(
     `select w.surface, r.prompt_type, r.correct, r.practice, r.in_session_retry, r.test
        from reviews r join words w on w.id = r.word_id
-      where r.prompt_type <> 'learn' order by w.surface`,
+      where r.prompt_type <> 'learn' order by w.surface, r.prompt_type`,
   );
 }
 
@@ -72,10 +80,19 @@ const TYPE: Record<string, { right: string; wrong?: string }> = {
   協力: { right: "kyouryoku" },
 };
 
+/** 문제에 따라 칠 뜻. partial 은 어근이 들어 있는 부분 정답(0.5점), wrong 은 전혀 다른 말이다. */
+const MEANING: Record<string, { right: string; partial: string; wrong: string }> = {
+  抽象的: { right: "추상적", partial: "추상", wrong: "구체적" },
+  環境: { right: "환경", partial: "환경에", wrong: "자연" },
+  協力: { right: "협력", partial: "협력하", wrong: "경쟁" },
+};
+
 type P = import("@playwright/test").Page;
 
 const surfaceOf = (page: P) => page.getByTestId("question-surface");
+/** 같은 입력칸이 단계에 따라 「읽기」 → 「뜻」 으로 이름이 바뀐다. */
 const answerBox = (page: P) => page.getByLabel("읽기");
+const meaningBox = (page: P) => page.getByLabel("뜻", { exact: true });
 const testCard = (page: P) => page.getByRole("link", { name: /실전 테스트/ });
 
 /** 홈에서 테스트를 시작해 첫 문제까지 간다. */
@@ -86,14 +103,24 @@ async function startFromHome(page: P) {
   await expect(surfaceOf(page)).toBeVisible();
 }
 
-/** 지금 문제를 푼다. right=false 면 오답을 친다(없으면 정답). 제출 뒤 결과를 보고 다음으로 넘어간다. */
-async function solve(page: P, opts: { right?: boolean } = {}) {
+/**
+ * 지금 문제를 푼다: 읽기를 제출하고, 뜻 입력으로 넘어가 뜻을 제출하고, 다음으로 넘어간다.
+ * right=false 면 읽기를 틀리게 친다(없으면 정답). meaning 은 칠 뜻의 종류(없으면 정답).
+ */
+async function solve(
+  page: P,
+  opts: { right?: boolean; meaning?: "right" | "partial" | "wrong" } = {},
+) {
   const surface = (await surfaceOf(page).innerText()).trim();
   const typed = opts.right === false ? (TYPE[surface].wrong ?? "ちがう") : TYPE[surface].right;
   await answerBox(page).fill(typed);
-  await answerBox(page).press("Enter"); // 제출
+  await answerBox(page).press("Enter"); // 읽기 제출
   await expect(page.getByTestId("verdict")).toBeVisible();
-  await answerBox(page).press("Enter"); // 다음
+  await answerBox(page).press("Enter"); // 뜻 입력으로
+  await meaningBox(page).fill(MEANING[surface][opts.meaning ?? "right"]);
+  await meaningBox(page).press("Enter"); // 뜻 제출
+  await expect(page.getByTestId("verdict")).toBeVisible();
+  await meaningBox(page).press("Enter"); // 다음
   return surface;
 }
 
@@ -102,7 +129,7 @@ test.describe("실전 테스트 화면", () => {
     await seedTestable(WORDS);
   });
 
-  test("시작부터 끝까지: 표기만 보이다가 제출하면 읽기 · 뜻 · 대조가 나오고 SRS 에 반영된다", async ({
+  test("시작부터 끝까지: 읽기를 내면 읽기만, 뜻을 내면 뜻이 나오고 SRS 에 반영된다", async ({
     page,
   }) => {
     await startFromHome(page);
@@ -120,32 +147,65 @@ test.describe("실전 테스트 화면", () => {
         await expect(page.getByTestId("reading-preview")).toContainText("ちゅうそうてき");
         await answerBox(page).press("Enter");
         const verdict = page.getByTestId("verdict");
+        await expect(verdict).toContainText("읽기");
         await expect(verdict).toContainText("틀렸습니다");
-        await expect(verdict).toContainText("ちゅうしょうてき");
-        await expect(verdict).toContainText("추상적");
+        await expect(page.locator("main")).toContainText("ちゅうしょうてき");
         await expect(verdict).toContainText("[そ]");
         await expect(verdict).toContainText("[しょ]");
-        await answerBox(page).press("Enter");
+        // 읽기를 낸 뒤에도 뜻은 DOM 에 없다 — 뜻을 묻는 동안 답이 드러나지 않는다
+        expect(await page.locator("main").innerHTML()).not.toContain("추상적");
+
+        await answerBox(page).press("Enter"); // 뜻 입력으로
+        await expect(meaningBox(page)).toBeVisible();
+        await expect(page.getByTestId("verdict")).toHaveCount(0);
+        expect(await page.locator("main").innerHTML()).not.toContain("추상적");
+        await meaningBox(page).fill("추상"); // 어근만 쳤다: 부분 정답
+        await meaningBox(page).press("Enter");
+        await expect(verdict).toContainText("뜻");
+        await expect(verdict).toContainText("부분 정답");
+        await expect(verdict).toContainText("0.5");
+        await expect(page.locator("main")).toContainText("추상적"); // 정답 뜻은 이제 나온다
+        await meaningBox(page).press("Enter");
       } else {
         await solve(page);
       }
     }
 
     await expect(page.getByTestId("result-summary")).toHaveText("3문제 중 2개");
-    await expect.poll(reviewCount).toBe(3); // 끝나면 곧바로 서버로 간다
+    await expect(page.getByTestId("result-detail")).toHaveText("읽기 2 / 3 · 뜻 2.5 / 3");
+    await expect(page.getByText("부분 정답 1개")).toHaveCount(0); // 읽기를 틀려 틀린 단어로 센다
+    await expect(page.getByText("틀린 단어 1개")).toBeVisible();
+    await expect.poll(reviewCount).toBe(6); // 끝나면 곧바로 서버로 간다 (단어마다 읽기 · 뜻 두 줄)
 
+    // 읽기를 틀린 단어는 내려가고 약점은 s2r. 부분 정답 뜻은 맞힌 것으로 쳐서 다른 단어와 같이 센다.
     expect(await wordRow("抽象的")).toMatchObject({ stage: 1, wrong_count: 1, last_wrong_type: "s2r" });
     expect(await wordRow("環境")).toMatchObject({ stage: 3, correct_count: 1 });
     expect(await wordRow("協力")).toMatchObject({ stage: 3, correct_count: 1 });
+    const row = (surface: string, prompt_type: string, correct: boolean) => ({
+      surface,
+      prompt_type,
+      correct,
+      practice: false,
+      in_session_retry: false,
+      test: true,
+    });
     expect(await testStateRows()).toEqual([
-      { surface: "協力", prompt_type: "s2r", correct: true, practice: false, in_session_retry: false, test: true },
-      { surface: "抽象的", prompt_type: "s2r", correct: false, practice: false, in_session_retry: false, test: true },
-      { surface: "環境", prompt_type: "s2r", correct: true, practice: false, in_session_retry: false, test: true },
+      row("協力", "s2m", true),
+      row("協力", "s2r", true),
+      row("抽象的", "s2m", true), // 부분 정답 = 맞힌 것
+      row("抽象的", "s2r", false),
+      row("環境", "s2m", true),
+      row("環境", "s2r", true),
     ]);
     expect((await itemRows()).find((r) => (r as { surface: string }).surface === "抽象的")).toMatchObject({
       typed: "ちゅうそうてき",
       correct: false,
     });
+    expect(await meaningRows()).toEqual([
+      { surface: "協力", typed_meaning: "협력", meaning_credit: 1 },
+      { surface: "抽象的", typed_meaning: "추상", meaning_credit: 0.5 },
+      { surface: "環境", typed_meaning: "환경", meaning_credit: 1 },
+    ]);
 
     // 홈: 끝낸 테스트의 카드는 사라지고, 최근 7일 복습 수에도 테스트 행이 들어가지 않는다
     await page.getByRole("link", { name: "홈으로" }).click();
@@ -170,6 +230,54 @@ test.describe("실전 테스트 화면", () => {
     await solve(page);
     await solve(page);
     await expect(page.getByTestId("result-summary")).toHaveText("3문제 중 3개");
+    await expect(page.getByTestId("result-detail")).toHaveText("읽기 3 / 3 · 뜻 3 / 3");
+  });
+
+  test("읽기만 내고 나가면 그 문항은 안 푼 채로 남아 처음부터 다시 나온다", async ({ page }) => {
+    await startFromHome(page);
+    const surface = (await surfaceOf(page).innerText()).trim();
+    await answerBox(page).fill(TYPE[surface].right);
+    await answerBox(page).press("Enter"); // 읽기 제출
+    await expect(page.getByTestId("verdict")).toBeVisible();
+    await answerBox(page).press("Enter"); // 뜻 입력으로
+    await expect(meaningBox(page)).toBeVisible();
+    await page.getByRole("button", { name: "나가기" }).click();
+    await page.waitForURL("**/");
+
+    // 아무것도 서버로 가지 않았고 세 문항 모두 안 푼 채다
+    expect(await reviewCount()).toBe(0);
+    expect((await itemRows()).every((r) => (r as { answered: boolean }).answered === false)).toBe(true);
+    await expect(testCard(page)).toContainText("남은 3문제");
+  });
+
+  test("뜻 입력: 빈 입력은 아무것도 하지 않고, 글자가 없는 입력은 안내하며, IME 확정 Enter 는 제출하지 않는다", async ({
+    page,
+  }) => {
+    await startFromHome(page);
+    const surface = (await surfaceOf(page).innerText()).trim();
+    await answerBox(page).fill(TYPE[surface].right);
+    await answerBox(page).press("Enter");
+    await answerBox(page).press("Enter"); // 뜻 입력으로
+    const box = meaningBox(page);
+    await expect(box).toBeVisible();
+    await expect(box).toHaveAttribute("lang", "ko");
+
+    await box.press("Enter"); // 빈 입력
+    await expect(page.getByTestId("verdict")).toHaveCount(0);
+    await box.fill("...");
+    await box.press("Enter");
+    await expect(page.getByText("뜻을 글자로 입력하세요")).toBeVisible();
+    await expect(page.getByTestId("verdict")).toHaveCount(0);
+
+    await box.fill(MEANING[surface].right);
+    await box.evaluate((el) =>
+      el.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", keyCode: 229, bubbles: true, cancelable: true }),
+      ),
+    );
+    await expect(page.getByTestId("verdict")).toHaveCount(0);
+    await box.press("Enter");
+    await expect(page.getByTestId("verdict")).toContainText("맞았습니다");
   });
 
   test("한자가 섞인 입력은 채점하지 않고, IME 확정 Enter(keyCode 229)는 제출하지 않는다 (Review Focus 1)", async ({
@@ -231,7 +339,7 @@ test.describe("테스트 답 반영 (/api/test-answers)", () => {
   const post = (
     page: import("@playwright/test").Page,
     batchId: string,
-    answers: { wordId: string; typed: string }[],
+    answers: { wordId: string; typed: string; typedMeaning?: string }[],
   ) => page.request.post("/api/test-answers", { data: { batchId, testDay: TODAY, answers } });
 
   test.beforeEach(async () => {
@@ -394,6 +502,80 @@ test.describe("테스트 답 반영 (/api/test-answers)", () => {
     );
     expect(flashcardLogs).toEqual([{ n: 1 }]); // 카드 채점은 로그로 남는다
   });
+
+  test("뜻 답도 서버가 다시 채점한다: 부분 정답은 맞힌 것으로 치고, 틀린 뜻은 stage 1 · 약점 s2m 으로 내린다", async ({
+    page,
+  }) => {
+    const res = await post(page, "zz-meaning-0001", [
+      // 읽기 정답 + 부분 정답 뜻(추상 ⊂ 추상적): 맞힌 것
+      { wordId: await wordId("抽象的"), typed: "ちゅうしょうてき", typedMeaning: "추상" },
+      // 읽기 정답 + 틀린 뜻: 내려간다
+      { wordId: await wordId("環境"), typed: "かんきょう", typedMeaning: "자연" },
+    ]);
+    expect(await res.json()).toEqual({ ok: true, applied: 2 });
+
+    expect(await wordRow("抽象的")).toMatchObject({ stage: 3, correct_count: 1, wrong_count: 0 });
+    expect(await wordRow("環境")).toMatchObject({
+      stage: 1,
+      correct_count: 0,
+      wrong_count: 1,
+      streak: 0,
+      last_wrong_type: "s2m",
+    });
+    expect(await meaningRows()).toEqual([
+      { surface: "抽象的", typed_meaning: "추상", meaning_credit: 0.5 },
+      { surface: "環境", typed_meaning: "자연", meaning_credit: 0 },
+    ]);
+    // 읽기 줄은 s2r, 뜻 줄은 s2m (유형 enum 을 늘리지 않는다). 읽기 정오는 뜻과 따로 남는다.
+    const t = (surface: string, prompt_type: string, correct: boolean) => ({
+      surface,
+      prompt_type,
+      correct,
+      practice: false,
+      in_session_retry: false,
+      test: true,
+    });
+    expect(await testStateRows()).toEqual([
+      t("抽象的", "s2m", true),
+      t("抽象的", "s2r", true),
+      t("環境", "s2m", false),
+      t("環境", "s2r", true),
+    ]);
+    expect(await itemRows()).toEqual([
+      { surface: "抽象的", typed: "ちゅうしょうてき", correct: true, answered: true },
+      { surface: "環境", typed: "かんきょう", correct: true, answered: true },
+    ]);
+  });
+
+  test("비교할 글자가 없는 뜻은 반영하지 않고, 쉼표 목록 · 괄호가 있는 뜻은 하나만 맞혀도 정답이다", async ({
+    page,
+  }) => {
+    const bad = await post(page, "zz-meaning-0002", [
+      { wordId: await wordId("抽象的"), typed: "ちゅうしょうてき", typedMeaning: "..." },
+    ]);
+    expect(await bad.json()).toEqual({ ok: true, applied: 0 });
+    expect(await reviewCount()).toBe(0);
+
+    await sql().query(`update words set meaning_ko = $1 where surface = $2`, ["(눈에 보이지 않는) 환경, 주변", "環境"]);
+    const ok = await post(page, "zz-meaning-0003", [
+      { wordId: await wordId("環境"), typed: "かんきょう", typedMeaning: "주변" },
+    ]);
+    expect(await ok.json()).toEqual({ ok: true, applied: 1 });
+    expect(await meaningRows()).toContainEqual({ surface: "環境", typed_meaning: "주변", meaning_credit: 1 });
+    expect(await wordRow("環境")).toMatchObject({ stage: 3, correct_count: 1 });
+  });
+
+  test("뜻 답이 있는 묶음도 같은 묶음은 한 번만 반영된다", async ({ page }) => {
+    const answers = [{ wordId: await wordId("環境"), typed: "かんきょう", typedMeaning: "자연" }];
+    expect(await (await post(page, "zz-meaning-0004", answers)).json()).toEqual({ ok: true, applied: 1 });
+    expect(await (await post(page, "zz-meaning-0004", answers)).json()).toEqual({
+      ok: true,
+      applied: 0,
+      duplicate: true,
+    });
+    expect(await wordRow("環境")).toMatchObject({ wrong_count: 1 });
+    expect(await reviewCount()).toBe(2); // 읽기 줄 + 뜻 줄, 한 번씩
+  });
 });
 
 test.describe("읽기 주의 배지", () => {
@@ -434,6 +616,38 @@ test.describe("읽기 주의 배지", () => {
       await page.keyboard.press("1");
     }
     expect(badge).toEqual({ 抽象的: true, 環境: true, 協力: false });
+  });
+});
+
+test.describe("뜻 실패와 다음 테스트의 선택", () => {
+  test("읽기는 맞혔어도 뜻을 틀린 단어는 재시험으로 먼저 뽑힌다", async ({ page }) => {
+    // 낼 수 있는 단어 12개, 문제 수 10. 모두 지난 테스트에서 읽기를 맞혔다. 월(月)만 뜻을 틀렸고 가장 최근에 풀었다.
+    // 뜻 실패를 틀린 것으로 세지 않으면 월은 「통과한 단어」 중 가장 최근이라 마지막 순서로 밀려 이번에 빠진다.
+    const words = [
+      ["山", "やま"], ["川", "かわ"], ["海", "うみ"], ["空", "そら"], ["森", "もり"], ["星", "ほし"],
+      ["雨", "あめ"], ["雪", "ゆき"], ["風", "かぜ"], ["雲", "くも"], ["花", "はな"], ["月", "つき"],
+    ];
+    await seedTestable(words.map(([surface, reading]) => ({ surface, reading, meaning: `뜻${surface}` })));
+    await sql().query(
+      `insert into typing_test_items (test_day, word_id, typed, correct, typed_meaning, meaning_credit, answered_at)
+       select $1::date, id, w.reading, true,
+              case when w.surface = '月' then '엉뚱' else '정답' end,
+              case when w.surface = '月' then 0 else 1 end,
+              case when w.surface = '月' then now() - interval '5 days'
+                   else now() - interval '6 days' - (random() * interval '3 days') end
+         from words w where w.note = $2`,
+      [daysAgo(6), MARK],
+    );
+    await sql().query(`update settings set test_size = 10 where id = 1`);
+
+    await startFromHome(page);
+    const picked = (await sql().query(
+      `select w.surface from typing_test_items i join words w on w.id = i.word_id
+        where i.test_day = $1::date order by w.surface`,
+      [TODAY],
+    )) as { surface: string }[];
+    expect(picked).toHaveLength(10);
+    expect(picked.map((r) => r.surface)).toContain("月");
   });
 });
 
@@ -490,6 +704,32 @@ test.describe("같은 날 카드 채점 가드", () => {
       { surface: "環境", correct: true, practice: false, test: false },
     ]);
   });
+
+  test("읽기는 맞혔어도 그날 뜻을 틀린 단어는 카드 채점이 주기를 다시 올리지 못한다", async ({ page }) => {
+    await seed([{ surface: "抽象的", reading: "ちゅうしょうてき", meaning: "추상적" }], TODAY);
+    await sql().query(
+      `update words set stage = 1, next_review = current_date + 1, wrong_count = 1,
+              last_wrong_type = 's2m' where surface = '抽象的' and note = $1`,
+      [MARK],
+    );
+    // 읽기 정답(correct = true) · 뜻 오답(meaning_credit = 0)으로 테스트에서 내려간 직후다.
+    await sql().query(
+      `insert into typing_test_items
+         (test_day, word_id, typed, correct, typed_meaning, meaning_credit, answered_at)
+       select $1::date, id, 'ちゅうしょうてき', true, '구체적', 0, now() from words where surface = '抽象的'`,
+      [TODAY],
+    );
+    const before = await wordRow("抽象的");
+
+    const res = await page.request.post("/api/grades", {
+      data: {
+        batchId: "zz-guard-0002",
+        grades: [{ wordId: await wordId("抽象的"), kind: "s2m", correct: true, retry: false }],
+      },
+    });
+    expect(await res.json()).toMatchObject({ ok: true, applied: 1 });
+    expect(await wordRow("抽象的")).toEqual(before); // stage 1 · 내일 그대로
+  });
 });
 
 /**
@@ -508,6 +748,14 @@ async function restoreNewSchema() {
     `do $$ begin
        if to_regclass('public.typing_test_items_off') is not null then
          alter table typing_test_items_off rename to typing_test_items;
+       end if;
+       if exists (select 1 from information_schema.columns
+                   where table_name = 'typing_test_items' and column_name = 'typed_meaning_off') then
+         alter table typing_test_items rename column typed_meaning_off to typed_meaning;
+       end if;
+       if exists (select 1 from information_schema.columns
+                   where table_name = 'typing_test_items' and column_name = 'meaning_credit_off') then
+         alter table typing_test_items rename column meaning_credit_off to meaning_credit;
        end if;
        if exists (select 1 from information_schema.columns
                    where table_name = 'reviews' and column_name = 'test_off') then
@@ -579,6 +827,48 @@ test.describe("스키마보다 코드가 먼저 올라간 DB (Review Focus 4)", 
     }
 
     expect(await testSize()).toBe(40); // 되돌린 뒤 설정 행이 멀쩡하다
+  });
+
+  test("뜻 열만 아직 없는 DB: 테스트 화면은 열리고, 읽기만 담은 답은 반영되며, 뜻이 담긴 답은 503 으로 거절된다", async ({
+    page,
+  }) => {
+    await seedTestable(WORDS);
+    await startTest(2);
+    await sql().query(`alter table typing_test_items rename column typed_meaning to typed_meaning_off`);
+    await sql().query(`alter table typing_test_items rename column meaning_credit to meaning_credit_off`);
+    try {
+      // 홈 · 테스트 화면이 죽지 않는다 (뜻 열을 to_jsonb 로 읽는다)
+      for (const path of ["/", "/test", "/study"]) {
+        const res = await page.goto(path);
+        expect(res?.status(), path).toBe(200);
+        await expect(page.getByText("설정이 필요합니다"), path).toHaveCount(0);
+      }
+      await page.goto("/test");
+      await expect(surfaceOf(page)).toBeVisible();
+
+      // 읽기만 담은 답(옛 화면)은 예전 문장 그대로 들어간다
+      const legacy = await page.request.post("/api/test-answers", {
+        data: {
+          batchId: "zz-nocol-0001",
+          testDay: TODAY,
+          answers: [{ wordId: await wordId("環境"), typed: "かんきょう" }],
+        },
+      });
+      expect(await legacy.json()).toEqual({ ok: true, applied: 1 });
+
+      // 뜻이 담긴 답은 열이 없어 실패한다 — ok 로 답하면 클라이언트가 답을 지워 버리므로 503 이다
+      const withMeaning = await page.request.post("/api/test-answers", {
+        data: {
+          batchId: "zz-nocol-0002",
+          testDay: TODAY,
+          answers: [{ wordId: await wordId("抽象的"), typed: "ちゅうしょうてき", typedMeaning: "추상적" }],
+        },
+      });
+      expect(withMeaning.status()).toBe(503);
+      expect(await withMeaning.json()).toMatchObject({ ok: false });
+    } finally {
+      await restoreNewSchema();
+    }
   });
 });
 
@@ -672,14 +962,32 @@ test.describe("키보드가 열린 화면", () => {
       if (c.keyboard) expect(centerY(kanji), "한자가 가운데보다 아래").toBeGreaterThan(centerY(stage) + 8);
       else expect(Math.abs(centerY(kanji) - centerY(stage)), "한자가 가운데").toBeLessThan(4);
 
-      // 제출한 뒤: 판정(맞음 · 틀림, 읽기 · 뜻, 대조)이 스크롤 없이 읽히고, 한자는 제자리다.
+      // 읽기를 낸 뒤: 판정(맞음 · 틀림, 대조)이 스크롤 없이 읽히고, 한자와 입력칸은 제자리다.
       await answerBox(page).press("Enter");
       await expect(page.getByTestId("verdict")).toBeVisible();
-      await inView("판정", page.getByTestId("verdict"));
-      expect((await boxOf(surfaceOf(page))).y, "판정 뒤 한자").toBeCloseTo(kanji.y, 0);
+      await inView("읽기 판정", page.getByTestId("verdict"));
+      expect((await boxOf(surfaceOf(page))).y, "읽기 판정 뒤 한자").toBeCloseTo(kanji.y, 0);
+      expect((await boxOf(answerBox(page))).y, "읽기 판정 뒤 입력칸").toBeCloseTo(input.y, 0);
+
+      // 뜻 입력: 같은 입력칸이 뜻 칸으로 바뀌어도 자리는 그대로고 키보드 위에 있다.
+      await answerBox(page).press("Enter");
+      await expect(meaningBox(page)).toBeVisible();
+      await inView("뜻 입력칸", meaningBox(page));
+      expect((await boxOf(meaningBox(page))).y, "뜻 입력칸").toBeCloseTo(input.y, 0);
+      expect((await boxOf(surfaceOf(page))).y, "뜻 입력 때 한자").toBeCloseTo(kanji.y, 0);
+      await meaningBox(page).fill(MEANING[surface].wrong);
+      await inView("뜻 제출 버튼", page.getByRole("button", { name: /제출/ }));
+
+      // 뜻을 낸 뒤: 판정과 정답 뜻이 스크롤 없이 읽히고, 한자는 제자리다.
+      await meaningBox(page).press("Enter");
+      await expect(page.getByTestId("verdict")).toBeVisible();
+      await inView("뜻 판정", page.getByTestId("verdict"));
+      await inView("정답 뜻", page.getByTestId("question-stage"));
+      expect((await boxOf(surfaceOf(page))).y, "뜻 판정 뒤 한자").toBeCloseTo(kanji.y, 0);
 
       // 다음 문제: 한자와 입력칸이 같은 자리에 있고 화면이 스크롤되지 않는다.
-      await answerBox(page).press("Enter");
+      await meaningBox(page).press("Enter");
+      await expect(answerBox(page)).toBeVisible();
       await expect(page.getByTestId("verdict")).toHaveCount(0);
       expect((await boxOf(answerBox(page))).y, "다음 문제의 입력칸").toBeCloseTo(input.y, 0);
       const nextKanji = await boxOf(surfaceOf(page));

@@ -455,6 +455,57 @@ describe("실전 테스트 채점", () => {
     const plan = planTestGrades(new Map(), [{ wordId: "gone", correct: true }], TODAY);
     expect(plan).toEqual([]);
   });
+
+  describe("뜻까지 물은 답", () => {
+    const run = (correct: boolean, meaningPass: boolean) => {
+      const states = new Map<string, SrsState>([["w1", base()]]);
+      return planTestGrades(states, [{ wordId: "w1", correct, meaningPass }], TODAY)[0];
+    };
+    const meaningLog = (correct: boolean) => ({
+      promptType: "s2m",
+      correct,
+      retry: false,
+      practice: false,
+      test: true,
+    });
+
+    it("읽기도 뜻도 맞히면 카운터를 한 번만 올리고 주기는 그대로다 — 로그는 읽기 · 뜻 두 줄", () => {
+      const plan = run(true, true);
+      expect(plan.counters).toEqual({ correct_count: 6, wrong_count: 1, streak: 3, last_wrong_type: null });
+      expect(plan.schedule).toBeNull();
+      expect(plan.log).toMatchObject({ promptType: "s2r", correct: true, test: true });
+      expect(plan.extraLogs).toEqual([meaningLog(true)]);
+    });
+
+    it("읽기는 맞히고 뜻을 틀리면 내일로 내리고 약점 유형은 s2m 이다 (다음 카드가 뜻을 묻는다)", () => {
+      const plan = run(true, false);
+      expect(plan.counters).toEqual({ correct_count: 5, wrong_count: 2, streak: 0, last_wrong_type: "s2m" });
+      expect(plan.schedule).toEqual({ stage: 1, next_review: addDays(TODAY, 1) });
+      expect(plan.log.correct).toBe(true);
+      expect(plan.extraLogs).toEqual([meaningLog(false)]);
+    });
+
+    it("읽기를 틀리고 뜻은 맞히면 약점 유형은 s2r 이다", () => {
+      const plan = run(false, true);
+      expect(plan.counters?.last_wrong_type).toBe("s2r");
+      expect(plan.schedule).toEqual({ stage: 1, next_review: addDays(TODAY, 1) });
+      expect(plan.log.correct).toBe(false);
+      expect(plan.extraLogs).toEqual([meaningLog(true)]);
+    });
+
+    it("둘 다 틀려도 오답 카운터는 한 번만 올리고, 약점 유형은 읽기(s2r)가 앞선다", () => {
+      const plan = run(false, false);
+      expect(plan.counters).toEqual({ correct_count: 5, wrong_count: 2, streak: 0, last_wrong_type: "s2r" });
+      expect(plan.schedule).toEqual({ stage: 1, next_review: addDays(TODAY, 1) });
+      expect(plan.extraLogs).toEqual([meaningLog(false)]);
+    });
+
+    it("뜻을 묻지 않은 답(예전 화면)은 읽기만 반영하고 뜻 로그를 남기지 않는다", () => {
+      const states = new Map<string, SrsState>([["w1", base()]]);
+      const plan = planTestGrades(states, [{ wordId: "w1", correct: true }], TODAY)[0];
+      expect(plan.extraLogs).toBeUndefined();
+    });
+  });
 });
 
 describe("그날 테스트에서 틀린 단어의 카드 채점", () => {

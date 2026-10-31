@@ -5,6 +5,7 @@
  * date / timestamptz 는 다른 조회와 같이 문자열로 고정해서 받는다.
  */
 import { db, isMissingSchema } from "./db";
+import { MEANING_PASS_MIN } from "./meaning-answer";
 import { APP_TIMEZONE, shuffle } from "./srs";
 import {
   isTestEligible,
@@ -63,9 +64,12 @@ async function fetchCandidates(dayStartHour: number): Promise<TestCandidate[]> {
                                             and not test) as s2r_wrong
                     from reviews group by word_id) r on r.word_id = w.id
        left join (select word_id,
-                         string_agg(case when correct then '1' else '0' end, '' order by answered_at) as history,
+                         -- 읽기를 틀렸거나 뜻 점수가 모자라면 0. 뜻을 묻지 않던 때의 답(null)은 읽기만 본다.
+                         string_agg(case when correct
+                                          and coalesce((to_jsonb(i) ->> 'meaning_credit')::float8, 1) >= ${MEANING_PASS_MIN}
+                                         then '1' else '0' end, '' order by answered_at) as history,
                          max(answered_at) as last_at
-                    from typing_test_items where answered_at is not null group by word_id) h
+                    from typing_test_items i where answered_at is not null group by word_id) h
               on h.word_id = w.id
       where w.suspended = false and w.stage > 0 and w.surface <> w.reading`,
     [APP_TIMEZONE, dayStartHour],
@@ -122,8 +126,11 @@ export interface TestSessionData {
 
 export async function loadTestSession(testDay: string): Promise<TestSessionData> {
   const rows = (await db().query(
+    // 뜻 답 열은 to_jsonb 로 읽는다. 열이 아직 없는 DB 에서도 테스트 화면이 열리게 하려는 것이다.
     `select i.word_id, w.surface, w.reading, w.meaning_ko, w.suspended,
-            i.typed, i.correct, i.answered_at is not null as answered
+            i.typed, i.correct, i.answered_at is not null as answered,
+            to_jsonb(i) ->> 'typed_meaning' as typed_meaning,
+            (to_jsonb(i) ->> 'meaning_credit')::float8 as meaning_credit
        from typing_test_items i join words w on w.id = i.word_id
       where i.test_day = $1::date`,
     [testDay],
@@ -136,6 +143,8 @@ export async function loadTestSession(testDay: string): Promise<TestSessionData>
     typed: string | null;
     correct: boolean | null;
     answered: boolean;
+    typed_meaning: string | null;
+    meaning_credit: number | null;
   }[];
 
   const question = (r: (typeof rows)[number]): TestQuestion => ({
@@ -151,7 +160,13 @@ export async function loadTestSession(testDay: string): Promise<TestSessionData>
     ),
     answered: rows
       .filter((r) => r.answered)
-      .map((r) => ({ ...question(r), typed: r.typed ?? "", correct: r.correct === true })),
+      .map((r) => ({
+        ...question(r),
+        typed: r.typed ?? "",
+        correct: r.correct === true,
+        typedMeaning: r.typed_meaning,
+        meaningCredit: r.meaning_credit === null ? null : Number(r.meaning_credit),
+      })),
   };
 }
 

@@ -53,8 +53,8 @@ export default async function TestPage() {
         <p className="text-sm text-muted">실전 테스트</p>
         <p className="mt-2 text-4xl font-semibold tabular-nums">{overview.count}문제</p>
         <p className="mt-4 text-sm text-muted">
-          한자를 보고 읽기를 가나로 직접 쳐서 답합니다. 한 글자라도 다르면 오답이고, 틀린 단어는 내일
-          다시 복습합니다.
+          한자를 보고 읽기를 가나로, 이어서 뜻을 한국어로 직접 쳐서 답합니다. 읽기는 한 글자라도 다르면
+          오답이고 뜻은 비슷하면 부분 점수를 받습니다. 틀린 단어는 내일 다시 복습합니다.
         </p>
         {/* 문항은 이 버튼으로만 만든다. 화면을 그리는 것만으로는 테스트가 생기지 않는다. */}
         <form action={startTypingTestAction} className="mt-8">

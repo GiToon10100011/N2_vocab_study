@@ -256,6 +256,24 @@ describe("답 요청 파싱", () => {
     ).toEqual([{ wordId: id(1), typed: "ちゅう" }]);
   });
 
+  it("뜻 답(typedMeaning)이 있으면 앞뒤 공백을 걷어 함께 받고, 없거나 모양이 틀리면 키를 두지 않는다", () => {
+    expect(
+      parseTestAnswers([
+        { wordId: id(1), typed: "あ", typedMeaning: "  겉모습, 외관 " },
+        { wordId: id(2), typed: "あ", typedMeaning: "   " },
+        { wordId: id(3), typed: "あ", typedMeaning: 7 },
+        { wordId: id(4), typed: "あ", typedMeaning: "가".repeat(101) },
+        { wordId: id(5), typed: "あ" },
+      ]),
+    ).toEqual([
+      { wordId: id(1), typed: "あ", typedMeaning: "겉모습, 외관" },
+      { wordId: id(2), typed: "あ" },
+      { wordId: id(3), typed: "あ" },
+      { wordId: id(4), typed: "あ" },
+      { wordId: id(5), typed: "あ" },
+    ]);
+  });
+
   it("200건까지, 같은 단어는 첫 답만", () => {
     expect(parseTestAnswers(Array.from({ length: 250 }, (_, i) => ({ wordId: id(i), typed: "あ" })))).toHaveLength(200);
     expect(

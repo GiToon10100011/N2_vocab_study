@@ -7,6 +7,7 @@ import {
   wordUpdateQueries,
 } from "@/lib/grade-apply";
 import { fetchTestWordRows, fetchUnansweredTestWordIds } from "@/lib/queries";
+import { judgeMeaning, meaningPassed } from "@/lib/meaning-answer";
 import { judgeReading } from "@/lib/reading-answer";
 import { getSettingsAndToday } from "@/lib/settings";
 import { planTestGrades } from "@/lib/srs";
@@ -45,9 +46,14 @@ export async function POST(req: Request) {
 
   const sql = db();
   try {
+    // 뜻 답이 없는 요청은 열쇠 입력이 예전 그대로다 — 배포 순간 재전송된 옛 묶음이 두 번 반영되지 않게.
     let key = receiptKey(
       (body as { batchId?: unknown })?.batchId,
-      ["test", testDay, answers.map((a) => [a.wordId, a.typed])],
+      [
+        "test",
+        testDay,
+        answers.map((a) => (a.typedMeaning === undefined ? [a.wordId, a.typed] : [a.wordId, a.typed, a.typedMeaning])),
+      ],
     );
     if (key) {
       try {
@@ -65,14 +71,24 @@ export async function POST(req: Request) {
     const rows = await fetchTestWordRows(ids.filter((id) => open.has(id)));
     const byId = new Map(rows.map((r) => [r.id, r]));
 
-    // 서버가 다시 채점한다. 채점할 수 없는 답(한자가 섞인 것)은 건너뛰어 그 문항을 안 푼 채로 둔다.
-    const judged = new Map<string, { kana: string; correct: boolean }>();
+    // 서버가 다시 채점한다. 채점할 수 없는 답(한자가 섞인 것 · 비교할 글자가 없는 뜻)은 건너뛰어 그 문항을 안 푼 채로 둔다.
+    // 뜻 답이 있으면 읽기와 한 문항으로 함께 반영한다. 뜻 답이 없는 요청(예전 화면)은 읽기만 반영한다.
+    const judged = new Map<
+      string,
+      { kana: string; correct: boolean; meaning: { typed: string; credit: number } | null }
+    >();
     for (const a of answers) {
       const word = byId.get(a.wordId);
       if (!word) continue;
       const j = judgeReading(a.typed, word);
       if (j.result === "invalid") continue;
-      judged.set(a.wordId, { kana: j.kana, correct: j.result === "correct" });
+      let meaning: { typed: string; credit: number } | null = null;
+      if (a.typedMeaning !== undefined) {
+        const m = judgeMeaning(a.typedMeaning, word.meaning_ko);
+        if (m.result === "invalid") continue;
+        meaning = { typed: m.typed, credit: m.credit };
+      }
+      judged.set(a.wordId, { kana: j.kana, correct: j.result === "correct", meaning });
     }
 
     const states = new Map<string, SrsState>(
@@ -93,7 +109,11 @@ export async function POST(req: Request) {
     const { today } = await getSettingsAndToday();
     const plan = planTestGrades(
       states,
-      [...judged].map(([wordId, j]) => ({ wordId, correct: j.correct })),
+      [...judged].map(([wordId, j]) => ({
+        wordId,
+        correct: j.correct,
+        ...(j.meaning ? { meaningPass: meaningPassed(j.meaning.credit) } : {}),
+      })),
       today,
     );
     if (plan.length === 0) return NextResponse.json({ ok: true, applied: 0 });
@@ -103,12 +123,20 @@ export async function POST(req: Request) {
       ...(key ? receiptQueries(sql, key) : []),
       ...plan.map((item) => {
         const j = judged.get(item.wordId)!;
-        return sql.query(
-          `update typing_test_items
-              set typed = $3, correct = $4, answered_at = now()
-            where test_day = $1::date and word_id = $2::uuid and answered_at is null`,
-          [testDay, item.wordId, j.kana, j.correct],
-        );
+        // 뜻 열은 뜻 답이 있을 때만 건드린다. 뜻 열이 없는 DB 에서도 읽기 답은 예전 문장 그대로 들어간다.
+        return j.meaning
+          ? sql.query(
+              `update typing_test_items
+                  set typed = $3, correct = $4, typed_meaning = $5, meaning_credit = $6, answered_at = now()
+                where test_day = $1::date and word_id = $2::uuid and answered_at is null`,
+              [testDay, item.wordId, j.kana, j.correct, j.meaning.typed, j.meaning.credit],
+            )
+          : sql.query(
+              `update typing_test_items
+                  set typed = $3, correct = $4, answered_at = now()
+                where test_day = $1::date and word_id = $2::uuid and answered_at is null`,
+              [testDay, item.wordId, j.kana, j.correct],
+            );
       }),
       // 이 트랜잭션이 문항을 전부 풀린 것으로 바꿨는지 센다. 위의 「안 푼 문항」 조회는 트랜잭션 밖이라, 다른 묶음 id 로
       // 같은 답이 동시에 오면 둘 다 문항을 열린 것으로 읽는다. 늦은 쪽의 문항 update 는 0행이지만 아래의 단어 갱신과

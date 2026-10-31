@@ -406,7 +406,17 @@ export interface GradePlanItem {
   /** 복습 스케줄 갱신. 연습 퀴즈에서는 항상 null 이다. */
   schedule: GradeSchedule | null;
   /** test 는 실전 테스트 채점일 때만 true 다(reviews.test). planGrades 는 쓰지 않는다. */
-  log: { promptType: CardKind; correct: boolean; retry: boolean; practice: boolean; test?: boolean };
+  log: PlanLog;
+  /** 같은 단어에 로그를 더 남길 때(실전 테스트의 뜻 답). 단어 갱신에는 쓰이지 않는다. 없으면 키가 없다. */
+  extraLogs?: PlanLog[];
+}
+
+export interface PlanLog {
+  promptType: CardKind;
+  correct: boolean;
+  retry: boolean;
+  practice: boolean;
+  test?: boolean;
 }
 
 /**
@@ -456,11 +466,17 @@ export function planGrades(
  * 맞힘: 카운터만 갱신한다. 테스트는 읽기를 확인하는 자리라 단계를 올리지 않는다
  *       (올리면 같은 날 플래시카드와 테스트에서 두 번 오를 수 있다).
  * 틀림: 「몰랐음」과 같다 — stage 1, 내일. last_wrong_type = 's2r' 이라 다음 플래시카드는 읽기를 묻는다.
- * 로그는 prompt_type 's2r' 에 test 표시를 단다(유형 enum 을 늘리지 않는다).
+ * 로그는 prompt_type 's2r'(읽기) · 's2m'(뜻)에 test 표시를 단다(유형 enum 을 늘리지 않는다).
+ *
+ * 뜻까지 물은 답(meaningPass 가 있다)은 단어 하나가 한 번의 채점이다. 읽기와 뜻이 모두 맞아야 맞힌 것이고,
+ * 하나라도 틀리면 내려간다. 카운터는 한 번만 올리고(읽기와 뜻 각각 올리면 한 번의 테스트가 두 번으로 셈해진다),
+ * 약점 유형은 읽기가 틀렸으면 s2r, 뜻만 틀렸으면 s2m 이다 — 다음 플래시카드가 그 쪽을 묻는다.
+ * 부분 점수로 맞힌 뜻은 meaningPass = true 다(lib/meaning-answer.ts). 로그는 읽기 줄과 뜻 줄 둘이다.
+ * meaningPass 가 없는 답(뜻을 묻지 않던 예전 화면)은 읽기만 본다.
  */
 export function planTestGrades(
   states: Map<string, SrsState>,
-  answers: { wordId: string; correct: boolean }[],
+  answers: { wordId: string; correct: boolean; meaningPass?: boolean }[],
   today: string,
 ): GradePlanItem[] {
   const out: GradePlanItem[] = [];
@@ -468,14 +484,22 @@ export function planTestGrades(
     const state = states.get(a.wordId);
     if (!state) continue; // 삭제된 단어
 
-    const counters = gradeCounters(state, "s2r", a.correct);
-    const schedule = a.correct ? null : gradeSchedule(state, false, today);
+    const wordCorrect = a.correct && (a.meaningPass ?? true);
+    const counters = gradeCounters(state, a.correct ? "s2m" : "s2r", wordCorrect);
+    const schedule = wordCorrect ? null : gradeSchedule(state, false, today);
     states.set(a.wordId, { stage: schedule ? schedule.stage : state.stage, ...counters });
     out.push({
       wordId: a.wordId,
       counters,
       schedule,
       log: { promptType: "s2r", correct: a.correct, retry: false, practice: false, test: true },
+      ...(a.meaningPass === undefined
+        ? {}
+        : {
+            extraLogs: [
+              { promptType: "s2m", correct: a.meaningPass, retry: false, practice: false, test: true },
+            ],
+          }),
     });
   }
   return out;

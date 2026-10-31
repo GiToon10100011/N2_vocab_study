@@ -422,6 +422,35 @@ describe("실전 테스트 답 묶음", () => {
       },
     });
   });
+
+  it("뜻 답(typedMeaning)이 있으면 같은 문항에 실어 보내고, 없으면 키를 두지 않는다", () => {
+    const withMeaning = { ...typed(1, "ちゅう"), typedMeaning: "겉모습, 외관" };
+    expect(
+      requestFor({ id: "b1xxxxxx", practice: false, test: DAY, grades: [withMeaning, typed(2, "あ")] }).body,
+    ).toEqual({
+      batchId: "b1xxxxxx",
+      testDay: DAY,
+      answers: [
+        { wordId: g(1).wordId, typed: "ちゅう", typedMeaning: "겉모습, 외관" },
+        { wordId: g(2).wordId, typed: "あ" },
+      ],
+    });
+  });
+
+  it("뜻 답만 다른 채점은 같은 채점이 아니다 — 보내는 사이 고친 답이 지워지지 않게", async () => {
+    const storage = memoryStorage([
+      { id: "t", practice: false, test: DAY, grades: [{ ...typed(1, "ちゅう"), typedMeaning: "외관" }] },
+    ]);
+    // 서버가 받는 사이 같은 문항의 뜻 답이 바뀌었다 (wordId · 읽기 답은 같다)
+    const send: SendGrades = async (batch) => {
+      putBatch(storage, { ...batch, grades: [{ ...typed(1, "ちゅう"), typedMeaning: "겉모습" }] });
+      return true;
+    };
+    await deliverOutbox(storage, send);
+    expect(readOutbox(storage)).toEqual([
+      { id: "t", practice: false, test: DAY, grades: [{ ...typed(1, "ちゅう"), typedMeaning: "겉모습" }] },
+    ]);
+  });
 });
 
 describe("normalizeUndoSeconds", () => {

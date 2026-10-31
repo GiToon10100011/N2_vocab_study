@@ -89,6 +89,8 @@ export interface GradeInput {
   retry: boolean;
   /** 실전 테스트에서 친 답(확정된 가나). 카드 채점에는 없다. 서버는 이것으로 다시 채점한다. */
   typed?: string;
+  /** 실전 테스트에서 친 뜻. 읽기와 한 문항으로 함께 간다. 서버는 이것도 다시 채점한다. */
+  typedMeaning?: string;
 }
 
 /** 실전 테스트의 한 문제. 읽기 · 뜻은 화면이 답을 받기 전까지 DOM 에 그리지 않는다. */
@@ -103,7 +105,12 @@ export interface TestQuestion {
 export interface TestAnswered extends TestQuestion {
   /** 그때 친 확정 가나 */
   typed: string;
+  /** 읽기를 맞혔는가 */
   correct: boolean;
+  /** 그때 친 뜻. 뜻을 묻지 않던 때의 답이면 null */
+  typedMeaning: string | null;
+  /** 뜻 점수: 1 정답, 0.5 부분 정답, 0 오답. 뜻을 묻지 않던 때의 답이면 null */
+  meaningCredit: number | null;
 }
 
 export interface PromptWeights {

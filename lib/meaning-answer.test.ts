@@ -7,6 +7,7 @@ import {
   meaningPassed,
   rootsClose,
   similarity,
+  withAcceptedMeaning,
 } from "./meaning-answer";
 
 const credit = (typed: string, meaning: string) => {
@@ -94,6 +95,26 @@ describe("같은 말의 다른 꼴", () => {
     expect(credit("줄", "줄다, 감소하다")).toBe(0.5);
     expect(credit("줄다", "줄다, 감소하다")).toBe(1); // 철자가 그대로 같으면 정답
   });
+
+  it("명사형(-음 · -기 · ㅁ 받침)과 용언은 같은 말이다 — 어근이 한 글자여도 정답이다", () => {
+    expect(credit("참다", "참음, 용서")).toBe(1);
+    expect(credit("참음", "참다")).toBe(1);
+    expect(credit("참기", "참음")).toBe(1);
+    expect(credit("기쁨", "기쁘다")).toBe(1);
+    expect(credit("성실함", "성실하다")).toBe(1);
+    expect(credit("관찰됨", "관찰")).toBe(1);
+    expect(credit("관찰하기", "관찰하다")).toBe(1);
+  });
+
+  it("한 글자 낱말의 ㅁ 받침은 명사형인지 알 수 없어 부분 점수만 준다", () => {
+    expect(credit("자다", "잠")).toBe(0.5);
+    expect(credit("살다", "삶")).toBe(0.5);
+    expect(credit("보다", "봄")).toBe(0.5);
+  });
+
+  it("용언 어미끼리만 다르면 뜻이 갈릴 수 있어 부분 점수만 준다", () => {
+    expect(credit("쌓다", "쌓이다")).toBe(0.5);
+  });
 });
 
 describe("뜻이 비슷하면 부분 점수", () => {
@@ -149,6 +170,47 @@ describe("판정할 수 없는 입력", () => {
 
   it("저장할 입력은 앞뒤 공백을 걷은 것이다", () => {
     expect(judgeMeaning("  겉모습 ", "겉모습")).toEqual({ result: "correct", credit: 1, typed: "겉모습" });
+  });
+
+  it("홀로 남은 자모뿐이면 판정하지 않는다", () => {
+    expect(judgeMeaning("ㅋㅋ", "관찰")).toEqual({ result: "invalid" });
+  });
+});
+
+describe("「이것도 정답」으로 뜻 목록에 더하기", () => {
+  it("친 뜻을 쉼표로 붙이고, 붙인 뒤에는 그 답이 정답이다", () => {
+    expect(withAcceptedMeaning("침", "바늘")).toBe("침, 바늘");
+    expect(credit("바늘", withAcceptedMeaning("침", "바늘")!)).toBe(1);
+    expect(withAcceptedMeaning("불만, 고충, 불편", "불평")).toBe("불만, 고충, 불편, 불평"); // 부분 정답도 붙인다
+  });
+
+  it("이미 정답이면 그대로 둔다 — 두 번 붙지 않는다", () => {
+    expect(withAcceptedMeaning("침, 바늘", "바늘")).toBe("침, 바늘");
+    expect(withAcceptedMeaning("참음, 용서", "참다")).toBe("참음, 용서");
+  });
+
+  it("홀로 남은 자모와 겹친 공백은 걷고 붙인다", () => {
+    expect(withAcceptedMeaning("침", "  뾰족한   바ㅁ늘 ")).toBe("침, 뾰족한 바늘");
+  });
+
+  it("판정할 수 없는 입력이면 붙이지 않는다", () => {
+    expect(withAcceptedMeaning("침", "...")).toBeNull();
+    expect(withAcceptedMeaning("침", "ㅋㅋ")).toBeNull();
+  });
+});
+
+describe("홀로 남은 자모", () => {
+  it("글자에 붙지 못한 자모는 자판 실수로 보고 빼고 비교한다", () => {
+    expect(credit("관ㅁ찰", "관찰")).toBe(1);
+    expect(credit("관찰ㅎ", "관찰")).toBe(1);
+  });
+
+  it("저장할 입력은 친 그대로다", () => {
+    expect(judgeMeaning("관ㅁ찰", "관찰")).toEqual({ result: "correct", credit: 1, typed: "관ㅁ찰" });
+  });
+
+  it("글자 안의 오타는 고쳐 주지 않는다", () => {
+    expect(credit("괌찰", "관찰")).toBe(0);
   });
 });
 

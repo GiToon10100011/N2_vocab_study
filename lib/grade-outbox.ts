@@ -79,6 +79,7 @@ export function requestFor(batch: {
           typed: g.typed ?? "",
           // 뜻 답은 읽기와 한 문항이다. 뜻을 묻지 않던 때의 답에는 키를 두지 않는다.
           ...(g.typedMeaning ? { typedMeaning: g.typedMeaning } : {}),
+          ...(g.typedMeaning && g.acceptMeaning ? { acceptMeaning: true } : {}),
         })),
       },
     };
@@ -144,7 +145,8 @@ const same = (a: GradeInput, b: GradeInput) =>
   a.correct === b.correct &&
   a.retry === b.retry &&
   a.typed === b.typed &&
-  a.typedMeaning === b.typedMeaning;
+  a.typedMeaning === b.typedMeaning &&
+  a.acceptMeaning === b.acceptMeaning;
 
 /**
  * 저장소에 있는 묶음을 보낸다. skipId 는 아직 되돌릴 수 있는 열린 묶음이라 건드리지 않는다.

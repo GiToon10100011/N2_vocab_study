@@ -7,7 +7,7 @@ import {
   wordUpdateQueries,
 } from "@/lib/grade-apply";
 import { fetchTestWordRows, fetchUnansweredTestWordIds } from "@/lib/queries";
-import { judgeMeaning, meaningPassed } from "@/lib/meaning-answer";
+import { judgeMeaning, meaningPassed, withAcceptedMeaning } from "@/lib/meaning-answer";
 import { judgeReading } from "@/lib/reading-answer";
 import { getSettingsAndToday } from "@/lib/settings";
 import { planTestGrades } from "@/lib/srs";
@@ -47,12 +47,19 @@ export async function POST(req: Request) {
   const sql = db();
   try {
     // 뜻 답이 없는 요청은 열쇠 입력이 예전 그대로다 — 배포 순간 재전송된 옛 묶음이 두 번 반영되지 않게.
+    // 「이것도 정답」을 누른 답만 끝에 표시가 붙는다. 그 밖의 답은 열쇠가 그대로다.
     let key = receiptKey(
       (body as { batchId?: unknown })?.batchId,
       [
         "test",
         testDay,
-        answers.map((a) => (a.typedMeaning === undefined ? [a.wordId, a.typed] : [a.wordId, a.typed, a.typedMeaning])),
+        answers.map((a) =>
+          a.typedMeaning === undefined
+            ? [a.wordId, a.typed]
+            : a.acceptMeaning
+              ? [a.wordId, a.typed, a.typedMeaning, "accept"]
+              : [a.wordId, a.typed, a.typedMeaning],
+        ),
       ],
     );
     if (key) {
@@ -73,20 +80,31 @@ export async function POST(req: Request) {
 
     // 서버가 다시 채점한다. 채점할 수 없는 답(한자가 섞인 것 · 비교할 글자가 없는 뜻)은 건너뛰어 그 문항을 안 푼 채로 둔다.
     // 뜻 답이 있으면 읽기와 한 문항으로 함께 반영한다. 뜻 답이 없는 요청(예전 화면)은 읽기만 반영한다.
+    // 「이것도 정답」을 누른 답은 친 뜻을 단어의 뜻 목록에 더한 뒤 그 목록으로 채점한다(정답이 된다).
+    // 더한 목록(addTo)은 아래 트랜잭션에서 문항과 함께 단어에 적는다. 이미 정답이면 더하지 않는다.
     const judged = new Map<
       string,
-      { kana: string; correct: boolean; meaning: { typed: string; credit: number } | null }
+      {
+        kana: string;
+        correct: boolean;
+        meaning: { typed: string; credit: number; addTo: string | null } | null;
+      }
     >();
     for (const a of answers) {
       const word = byId.get(a.wordId);
       if (!word) continue;
       const j = judgeReading(a.typed, word);
       if (j.result === "invalid") continue;
-      let meaning: { typed: string; credit: number } | null = null;
+      let meaning: { typed: string; credit: number; addTo: string | null } | null = null;
       if (a.typedMeaning !== undefined) {
-        const m = judgeMeaning(a.typedMeaning, word.meaning_ko);
+        const accepted = a.acceptMeaning ? withAcceptedMeaning(word.meaning_ko, a.typedMeaning) : null;
+        const m = judgeMeaning(a.typedMeaning, accepted ?? word.meaning_ko);
         if (m.result === "invalid") continue;
-        meaning = { typed: m.typed, credit: m.credit };
+        meaning = {
+          typed: m.typed,
+          credit: m.credit,
+          addTo: accepted !== null && accepted !== word.meaning_ko ? accepted : null,
+        };
       }
       judged.set(a.wordId, { kana: j.kana, correct: j.result === "correct", meaning });
     }
@@ -149,6 +167,13 @@ export async function POST(req: Request) {
         [testDay, plan.map((item) => item.wordId), plan.length],
       ),
       ...wordUpdateQueries(sql, plan),
+      // 「이것도 정답」으로 더한 뜻. 위의 개수 확인이 어긋나면 이것도 함께 취소된다.
+      ...plan.flatMap((item) => {
+        const addTo = judged.get(item.wordId)!.meaning?.addTo;
+        return addTo
+          ? [sql.query(`update words set meaning_ko = $2 where id = $1::uuid`, [item.wordId, addTo])]
+          : [];
+      }),
       reviewInsertQuery(sql, plan, { test: true }),
     ];
 

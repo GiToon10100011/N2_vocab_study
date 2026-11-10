@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { createUndoBuffer, releaseUndoBuffer } from "@/lib/grade-client";
 import type { UndoBuffer } from "@/lib/grade-outbox";
-import { judgeMeaning, meaningPassed } from "@/lib/meaning-answer";
+import { judgeMeaning, meaningPassed, withAcceptedMeaning } from "@/lib/meaning-answer";
 import { convertAnswer, judgeReading } from "@/lib/reading-answer";
 import { diffSyllables, type DiffBlock } from "@/lib/syllable-diff";
 import type { TestAnswered, TestQuestion } from "@/lib/types";
@@ -105,6 +105,8 @@ export function TestSession({
   const [step, setStep] = useState<Step>("reading");
   const [readingResult, setReadingResult] = useState<ReadingResult | null>(null);
   const [meaningResult, setMeaningResult] = useState<MeaningVerdict>(null);
+  /** 「이것도 정답」으로 친 뜻을 더한 이 문제의 뜻 목록. 위 문제 칸의 정답 뜻이 이것으로 바뀐다. */
+  const [acceptedMeaning, setAcceptedMeaning] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [finished, setFinished] = useState(questions.length === 0);
   /** 이번에 푼 문제의 기록. 뜻까지 낸 문제만 들어온다. */
@@ -181,6 +183,7 @@ export function TestSession({
       },
     ]);
     // 서버가 같은 함수로 다시 채점하므로 정오가 아니라 확정된 가나와 친 뜻을 보낸다. 읽기와 뜻은 한 문항이다.
+    // 저장소에는 지금 남지만 서버로는 다음 문제로 넘어갈 때 보낸다 — 결과 화면의 「이것도 정답」이 이 답을 고칠 수 있게.
     bufferRef.current?.add({
       wordId: question.wordId,
       kind: "s2r",
@@ -190,8 +193,43 @@ export function TestSession({
       typedMeaning: m.typed,
     });
     submittedRef.current += 1;
-    if (submittedRef.current % FLUSH_EVERY === 0) void bufferRef.current?.close().catch(() => undefined);
     setStep("meaning-result");
+  }
+
+  /**
+   * 「이것도 정답」: 친 뜻을 이 단어의 뜻 목록에 더하고 정답으로 친다(동의어는 철자로 알아볼 수 없다).
+   * 방금 보관한 답을 꺼내 표시를 붙여 다시 넣는다. 서버가 같은 함수로 뜻 목록을 고치고 다시 채점한다.
+   */
+  function acceptMeaning() {
+    if (!question || !readingResult || !meaningResult || step !== "meaning-result" || blockedRef.current) return;
+    if (meaningResult.credit === 1) return;
+    const meaning = withAcceptedMeaning(question.meaning_ko, meaningResult.typed);
+    if (meaning === null) return;
+    const buffer = bufferRef.current;
+    // 다른 탭이 이미 가져가 보냈다. 서버에 간 답은 고치지 않는다.
+    if (!buffer || !buffer.undo()) {
+      setMessage("이미 보낸 답이라 바꿀 수 없습니다");
+      return;
+    }
+    buffer.add({
+      wordId: question.wordId,
+      kind: "s2r",
+      correct: readingResult.correct,
+      retry: false,
+      typed: readingResult.kana,
+      typedMeaning: meaningResult.typed,
+      acceptMeaning: true,
+    });
+    setAcceptedMeaning(meaning);
+    setMeaningResult({ credit: 1, typed: meaningResult.typed, accepted: true });
+    setDone((d) =>
+      d.map((r) =>
+        r.question.wordId === question.wordId
+          ? { ...r, question: { ...r.question, meaning_ko: meaning }, meaningCredit: 1 }
+          : r,
+      ),
+    );
+    setMessage(null);
   }
 
   function next() {
@@ -202,11 +240,13 @@ export function TestSession({
       void bufferRef.current?.close().catch(() => undefined);
       return;
     }
+    if (submittedRef.current % FLUSH_EVERY === 0) void bufferRef.current?.close().catch(() => undefined);
     setIndex(index + 1);
     setInput("");
     setStep("reading");
     setReadingResult(null);
     setMeaningResult(null);
+    setAcceptedMeaning(null);
     setMessage(null);
   }
 
@@ -387,7 +427,11 @@ export function TestSession({
           data-keyboard={viewport?.keyboard ? "open" : undefined}
           className="test-stage min-h-0 flex-1 py-2"
         >
-          <QuestionFace question={question} readingShown={step !== "reading"} meaningShown={step === "meaning-result"} />
+          <QuestionFace
+            question={acceptedMeaning ? { ...question, meaning_ko: acceptedMeaning } : question}
+            readingShown={step !== "reading"}
+            meaningShown={step === "meaning-result"}
+          />
         </section>
 
         {/* 판정 줄: 두 줄 자리를 늘 잡아 둔다. 판정이 한 줄을 넘겨도 아래 칸 높이가 그대로라 문제가 움직이지 않는다.
@@ -439,6 +483,17 @@ export function TestSession({
           // 초록 · 붉은 테두리는 판정에만 쓴다. 입력하는 동안의 포커스는 회색이다(초록 포커스가 오답과 헷갈렸다).
           className={`h-11 min-w-0 flex-1 rounded-[10px] border-[1.5px] bg-surface px-3 text-center text-xl outline-none ${resultTone}`}
         />
+        {step === "meaning-result" && meaningResult && meaningResult.credit < 1 && (
+          // Enter 는 늘 「다음」이다. 이 버튼은 손으로 눌러야 한다 — 실수로 정답 처리되지 않게.
+          <button
+            onPointerDown={(e) => e.preventDefault()}
+            onClick={acceptMeaning}
+            data-testid="accept-meaning"
+            className="h-11 shrink-0 rounded-[10px] border-[1.5px] border-border bg-surface px-3 text-sm font-semibold"
+          >
+            이것도 정답
+          </button>
+        )}
         <button
           // 눌러도 입력칸 포커스를 잃지 않게 한다. 잃으면 아이폰에서 키보드가 내려가고 화면 높이가 다시 바뀐다.
           onPointerDown={(e) => e.preventDefault()}

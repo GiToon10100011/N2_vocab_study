@@ -1,9 +1,10 @@
 /**
- * 실전 테스트(한자 → 읽기 타이핑)의 규칙. 전부 순수 함수다. DB 조회는 lib/typing-test-load.ts 가 한다.
+ * 실전 테스트(한자 → 읽기 · 뜻 타이핑)의 규칙. 전부 순수 함수다. DB 조회는 lib/typing-test-load.ts 가 한다.
  *
  * - 이틀에 한 번, 마지막으로 「끝낸」 테스트의 학습일 기준으로 뜬다. 며칠을 건너뛰어도 뜨는 것은 1회분이다.
- * - N 자리를 재시험 → 처음 보는 단어(위험도 가중 무작위) → 통과한 단어(오래된 순) 로 채우고 섞는다.
- *   위험한 것부터 줄 세우지 않는다. 그러면 첫 테스트가 가장 어려운 단어로만 채워져 오답이 몰린다.
+ * - N 자리를 재시험 → 처음 보는 단어(무작위) → 통과한 단어(오래된 순) 로 채우고 섞는다. 단어장 전체를 한 바퀴
+ *   무작위로 돌고 나서 다음 바퀴로 간다. 카드 오답 같은 가중치를 두지 않는다 — 카드 복습에 자주 나오는 단어가
+ *   테스트에도 몰려서 두 쪽에 같은 단어만 나왔다(2026-11-10, 사용자 결정).
  */
 import { checkAnswer } from "./reading-answer";
 import {
@@ -52,21 +53,15 @@ export interface TestCandidate {
   id: string;
   surface: string;
   reading: string;
-  study_day: string;
   stage: number;
   suspended: boolean;
   /** 첫 리뷰 로그(learn 포함)의 학습일. 로그가 없으면 null */
   firstReviewDay: string | null;
-  /** 플래시카드 s2r 오답 (재시도 · 연습 · 테스트 행 제외) */
-  s2rWrong: number;
   /** 테스트 답의 정오, 오래된 것부터 */
   history: boolean[];
   /** 마지막 테스트 답 시각(ISO) */
   lastAnsweredAt: string | null;
 }
-
-/** 헷갈리는 소리: 요음 · 촉음, おう · えい 류 장음 */
-export const CONFUSABLE = /[ゃゅょっ]|[おこそとのほもよろをごぞどぼぽ]う|[えけせてねへめれげぜでべぺ]い/;
 
 /**
  * 한자가 있고, 보류되지 않았고, 이미 학습한 단어. 그날 처음 배운 단어는 뺀다.
@@ -82,34 +77,19 @@ export function isTestEligible(c: TestCandidate, today: string): boolean {
   );
 }
 
-/** 플래시카드 s2r 오답 · 헷갈리는 소리 · 오래된 정도를 곱한다. 최소 1, 최대 72. */
-export function testWeight(c: TestCandidate, today: string): number {
-  const wrong = 1 + Math.min(c.s2rWrong, 3);
-  const trap = CONFUSABLE.test(c.reading) ? 2 : 1;
-  const age = 1 + Math.min(Math.max(diffDays(today, c.study_day), 0), 56) / 7;
-  return wrong * trap * age;
-}
-
-/**
- * 가중 무작위 순서(Efraimidis–Spirakis). 무거울수록 앞에 올 확률이 높지만 항상 앞은 아니다.
- * rand 를 입력 순서대로 항목마다 한 번씩 부른다. 같은 key 는 입력 순서를 지킨다.
- */
-export function weightedOrder<T>(
-  items: T[],
-  weight: (t: T) => number,
-  rand: () => number = Math.random,
-): T[] {
-  return items
-    .map((item, i) => ({ item, i, key: Math.log(1 - rand()) / weight(item) }))
-    .sort((a, b) => b.key - a.key || a.i - b.i)
-    .map((x) => x.item);
-}
-
 /** 마지막 답이 오래된 것부터. 답이 없으면 가장 오래된 것으로 친다. */
 function byLastAnswered(a: TestCandidate, b: TestCandidate): number {
   const x = a.lastAnsweredAt ?? "";
   const y = b.lastAnsweredAt ?? "";
   return x < y ? -1 : x > y ? 1 : 0;
+}
+
+/**
+ * 오래된 순. 같은 시각끼리는 무작위다 — 한 묶음으로 보낸 답은 answered_at 이 같아서, 입력 순서를 따르면
+ * 다음 바퀴가 지난 바퀴와 같은 순서로 나온다. 섞은 뒤 안정 정렬한다.
+ */
+function oldestFirst(cs: TestCandidate[], rand: () => number): TestCandidate[] {
+  return shuffle(cs, rand).sort(byLastAnswered);
 }
 
 /** 이번 테스트에 낼 단어 id. 순서는 섞여 있다. */
@@ -120,14 +100,12 @@ export function pickTestWords(
   rand: () => number = Math.random,
 ): string[] {
   const eligible = cands.filter((c) => isTestEligible(c, today));
-  const retest = eligible.filter((c) => testStatus(c.history) === "retest").sort(byLastAnswered);
-  const fresh = weightedOrder(
-    eligible.filter((c) => testStatus(c.history) === "untested"),
-    (c) => testWeight(c, today),
-    rand,
-  );
-  const passed = eligible.filter((c) => testStatus(c.history) === "passed").sort(byLastAnswered);
-  const picked = [...retest, ...fresh, ...passed].slice(0, size);
+  const of = (s: TestStatus) => eligible.filter((c) => testStatus(c.history) === s);
+  const picked = [
+    ...oldestFirst(of("retest"), rand),
+    ...shuffle(of("untested"), rand),
+    ...oldestFirst(of("passed"), rand),
+  ].slice(0, size);
   return shuffle(picked, rand).map((c) => c.id);
 }
 
@@ -198,29 +176,39 @@ const MAX_ANSWERS = 200;
 const MAX_TYPED = 64;
 const MAX_MEANING = 100;
 
+export interface TestAnswerInput {
+  wordId: string;
+  typed: string;
+  typedMeaning?: string;
+  /** 「이것도 정답」을 눌렀다: 친 뜻을 단어의 뜻 목록에 더하고 정답으로 친다. typedMeaning 이 있을 때만 둔다. */
+  acceptMeaning?: true;
+}
+
 /**
  * /api/test-answers 의 answers. 모양이 맞는 것만, 같은 단어는 첫 답만 받는다.
  * typedMeaning 은 뜻을 물은 화면이 보낸다. 없거나 모양이 틀리면 키를 두지 않는다 — 읽기만 반영한다
- * (뜻을 묻지 않던 예전 화면의 요청도 그대로 받아야 한다).
+ * (뜻을 묻지 않던 예전 화면의 요청도 그대로 받아야 한다). acceptMeaning 은 true 일 때만 키를 둔다.
  */
-export function parseTestAnswers(
-  raw: unknown,
-): { wordId: string; typed: string; typedMeaning?: string }[] {
+export function parseTestAnswers(raw: unknown): TestAnswerInput[] {
   if (!Array.isArray(raw)) return [];
-  const out: { wordId: string; typed: string; typedMeaning?: string }[] = [];
+  const out: TestAnswerInput[] = [];
   const seen = new Set<string>();
   for (const item of raw) {
     if (out.length >= MAX_ANSWERS) break;
     if (typeof item !== "object" || item === null) continue;
-    const { wordId, typed, typedMeaning } = item as Record<string, unknown>;
+    const { wordId, typed, typedMeaning, acceptMeaning } = item as Record<string, unknown>;
     if (typeof wordId !== "string" || wordId.length < 10 || seen.has(wordId)) continue;
     if (typeof typed !== "string" || typed.length === 0 || typed.length > MAX_TYPED) continue;
     seen.add(wordId);
     const meaning = typeof typedMeaning === "string" ? typedMeaning.trim() : "";
+    if (meaning.length === 0 || meaning.length > MAX_MEANING) {
+      out.push({ wordId, typed });
+      continue;
+    }
     out.push(
-      meaning.length > 0 && meaning.length <= MAX_MEANING
-        ? { wordId, typed, typedMeaning: meaning }
-        : { wordId, typed },
+      acceptMeaning === true
+        ? { wordId, typed, typedMeaning: meaning, acceptMeaning: true }
+        : { wordId, typed, typedMeaning: meaning },
     );
   }
   return out;

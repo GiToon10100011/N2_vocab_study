@@ -437,6 +437,33 @@ describe("실전 테스트 답 묶음", () => {
     });
   });
 
+  it("「이것도 정답」(acceptMeaning)은 뜻 답과 함께일 때만 실어 보낸다", () => {
+    const accepted = { ...typed(1, "ちゅう"), typedMeaning: "바늘", acceptMeaning: true as const };
+    const noMeaning = { ...typed(2, "あ"), acceptMeaning: true as const };
+    expect(requestFor({ id: "b1xxxxxx", practice: false, test: DAY, grades: [accepted, noMeaning] }).body).toEqual({
+      batchId: "b1xxxxxx",
+      testDay: DAY,
+      answers: [
+        { wordId: g(1).wordId, typed: "ちゅう", typedMeaning: "바늘", acceptMeaning: true },
+        { wordId: g(2).wordId, typed: "あ" },
+      ],
+    });
+  });
+
+  it("「이것도 정답」만 다른 채점도 같은 채점이 아니다", async () => {
+    const storage = memoryStorage([
+      { id: "t", practice: false, test: DAY, grades: [{ ...typed(1, "ちゅう"), typedMeaning: "바늘" }] },
+    ]);
+    const accepted = { ...typed(1, "ちゅう"), typedMeaning: "바늘", acceptMeaning: true as const };
+    // 서버가 받는 사이 같은 답에 「이것도 정답」을 눌렀다
+    const send: SendGrades = async (batch) => {
+      putBatch(storage, { ...batch, grades: [accepted] });
+      return true;
+    };
+    await deliverOutbox(storage, send);
+    expect(readOutbox(storage)).toEqual([{ id: "t", practice: false, test: DAY, grades: [accepted] }]);
+  });
+
   it("뜻 답만 다른 채점은 같은 채점이 아니다 — 보내는 사이 고친 답이 지워지지 않게", async () => {
     const storage = memoryStorage([
       { id: "t", practice: false, test: DAY, grades: [{ ...typed(1, "ちゅう"), typedMeaning: "외관" }] },

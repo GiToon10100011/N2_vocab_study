@@ -91,6 +91,8 @@ export interface GradeInput {
   typed?: string;
   /** 실전 테스트에서 친 뜻. 읽기와 한 문항으로 함께 간다. 서버는 이것도 다시 채점한다. */
   typedMeaning?: string;
+  /** 「이것도 정답」을 눌렀다. 서버가 친 뜻을 단어의 뜻 목록에 더하고 정답으로 친다. typedMeaning 이 있을 때만 둔다. */
+  acceptMeaning?: true;
 }
 
 /** 실전 테스트의 한 문제. 읽기 · 뜻은 화면이 답을 받기 전까지 DOM 에 그리지 않는다. */

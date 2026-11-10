@@ -8,18 +8,22 @@ import {
   pickTestWords,
   testPhase,
   testStatus,
-  testWeight,
-  weightedOrder,
   type LatestTest,
   type TestCandidate,
 } from "./typing-test";
 
 const T = "2026-10-22";
 
-/** 부를 때마다 값을 차례로 돌려주는 난수. */
-function seq(...values: number[]): () => number {
-  let i = 0;
-  return () => values[i++ % values.length];
+/** 씨앗이 같으면 같은 수열을 내는 난수(mulberry32). 무작위성을 재현 가능하게 시험한다. */
+function seeded(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
 }
 
 function cand(over: Partial<TestCandidate> = {}): TestCandidate {
@@ -29,9 +33,7 @@ function cand(over: Partial<TestCandidate> = {}): TestCandidate {
     suspended: false,
     surface: "違反",
     reading: "いはん",
-    study_day: T,
     firstReviewDay: "2026-10-19",
-    s2rWrong: 0,
     history: [],
     lastAnsweredAt: null,
     ...over,
@@ -83,44 +85,6 @@ describe("출제 대상", () => {
   });
 });
 
-describe("위험도 가중치", () => {
-  it("아무 위험 요소가 없으면 1", () => {
-    expect(testWeight(cand(), T)).toBe(1);
-  });
-
-  it("플래시카드 s2r 오답은 3회까지 센다", () => {
-    expect(testWeight(cand({ s2rWrong: 2 }), T)).toBe(3);
-    expect(testWeight(cand({ s2rWrong: 9 }), T)).toBe(4);
-  });
-
-  it("요음 · 장음 · 촉음이 있으면 한 번만 두 배", () => {
-    for (const r of ["がっこう", "ちゅうしょうてき", "けいざい", "せいじ"]) {
-      expect(testWeight(cand({ reading: r }), T)).toBe(2);
-    }
-  });
-
-  it("오래된 단어일수록 무겁고 56일에서 멈춘다", () => {
-    expect(testWeight(cand({ study_day: "2026-10-15" }), T)).toBe(2);
-    expect(testWeight(cand({ study_day: "2026-08-01" }), T)).toBe(9);
-    expect(testWeight(cand({ study_day: "2026-10-30" }), T)).toBe(1);
-  });
-
-  it("세 요소를 곱한다", () => {
-    expect(testWeight(cand({ s2rWrong: 3, reading: "がっこう", study_day: "2026-08-01" }), T)).toBe(72);
-  });
-});
-
-describe("가중 무작위 순서", () => {
-  it("난수가 같으면 무거운 순이고 동률은 입력 순이다", () => {
-    const w = { a: 1, b: 3, c: 3, d: 2 } as Record<string, number>;
-    expect(weightedOrder(["a", "b", "c", "d"], (x) => w[x], () => 0.5)).toEqual(["b", "c", "d", "a"]);
-  });
-
-  it("가벼운 쪽이 이길 수도 있다 — 위험한 것부터 줄 세우지 않는다", () => {
-    expect(weightedOrder(["a", "b"], (x) => (x === "a" ? 1 : 3), seq(0.01, 0.99))).toEqual(["a", "b"]);
-  });
-});
-
 describe("출제 선택", () => {
   const at = (day: string) => `2026-10-${day}T00:00:00Z`;
   const sorted = (ids: string[]) => [...ids].sort();
@@ -128,11 +92,10 @@ describe("출제 선택", () => {
   it("재시험 → 처음 보는 단어 → 통과한 단어 순으로 채운다", () => {
     const cands = [
       cand({ id: "P", history: [true], lastAnsweredAt: at("01") }),
-      cand({ id: "U2" }),
-      cand({ id: "U1", s2rWrong: 3 }),
+      cand({ id: "U" }),
       cand({ id: "R", history: [false], lastAnsweredAt: at("20") }),
     ];
-    expect(sorted(pickTestWords(cands, T, 2, () => 0.5))).toEqual(["R", "U1"]);
+    expect(sorted(pickTestWords(cands, T, 2, () => 0.5))).toEqual(["R", "U"]);
   });
 
   it("재시험이 자리보다 많으면 오래 기다린 것부터", () => {
@@ -161,13 +124,27 @@ describe("출제 선택", () => {
     expect(pickTestWords(cands, T, 10, () => 0.5)).toEqual(["U"]);
   });
 
-  it("처음 보는 단어 자리는 가중 무작위로 채운다", () => {
-    const cands = [
-      cand({ id: "U1", s2rWrong: 3, reading: "がっこう", study_day: "2026-08-01" }),
-      cand({ id: "U2" }),
-      cand({ id: "U3", s2rWrong: 3 }),
-    ];
-    expect(sorted(pickTestWords(cands, T, 2, () => 0.5))).toEqual(["U1", "U3"]);
+  it("처음 보는 단어 자리는 가중치 없이 고르게 무작위로 채운다", () => {
+    const cands = ["U1", "U2", "U3", "U4"].map((id) => cand({ id }));
+    const rand = seeded(1);
+    const count = new Map<string, number>();
+    const runs = 4000;
+    for (let i = 0; i < runs; i++) {
+      const [id] = pickTestWords(cands, T, 1, rand);
+      count.set(id, (count.get(id) ?? 0) + 1);
+    }
+    for (const c of cands) {
+      const share = (count.get(c.id) ?? 0) / runs;
+      expect(share, c.id).toBeGreaterThan(0.2);
+      expect(share, c.id).toBeLessThan(0.3);
+    }
+  });
+
+  it("같은 시각에 답한 통과 단어끼리는 무작위다 — 다음 바퀴가 지난 바퀴의 순서를 따르지 않는다", () => {
+    const cands = ["P1", "P2", "P3", "P4"].map((id) => cand({ id, history: [true], lastAnsweredAt: at("01") }));
+    const picks = new Set<string>();
+    for (let s = 1; s <= 40; s++) picks.add(pickTestWords(cands, T, 1, seeded(s))[0]);
+    expect(picks.size).toBeGreaterThan(1);
   });
 
   it("뽑은 문제는 섞는다", () => {
@@ -271,6 +248,22 @@ describe("답 요청 파싱", () => {
       { wordId: id(3), typed: "あ" },
       { wordId: id(4), typed: "あ" },
       { wordId: id(5), typed: "あ" },
+    ]);
+  });
+
+  it("「이것도 정답」(acceptMeaning)은 true 이고 뜻 답이 있을 때만 받는다", () => {
+    expect(
+      parseTestAnswers([
+        { wordId: id(1), typed: "あ", typedMeaning: "바늘", acceptMeaning: true },
+        { wordId: id(2), typed: "あ", typedMeaning: "바늘", acceptMeaning: "true" },
+        { wordId: id(3), typed: "あ", typedMeaning: "바늘", acceptMeaning: false },
+        { wordId: id(4), typed: "あ", acceptMeaning: true },
+      ]),
+    ).toEqual([
+      { wordId: id(1), typed: "あ", typedMeaning: "바늘", acceptMeaning: true },
+      { wordId: id(2), typed: "あ", typedMeaning: "바늘" },
+      { wordId: id(3), typed: "あ", typedMeaning: "바늘" },
+      { wordId: id(4), typed: "あ" },
     ]);
   });
 

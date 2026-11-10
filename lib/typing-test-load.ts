@@ -45,23 +45,18 @@ async function fetchLatestTest(): Promise<LatestTest | null> {
 }
 
 /**
- * 출제 후보(한자가 있고 학습한 단어)와 각자의 위험 요소. 첫 리뷰의 학습일은 DB 가 하루 경계(dayStartHour)를
+ * 출제 후보(한자가 있고 학습한 단어)와 테스트 이력. 첫 리뷰의 학습일은 DB 가 하루 경계(dayStartHour)를
  * 반영해 계산한다 — 그날 처음 배운 단어를 가려내는 데 쓴다.
  */
 async function fetchCandidates(dayStartHour: number): Promise<TestCandidate[]> {
   const rows = (await db().query(
     `select w.id, w.surface, w.reading, w.stage, w.suspended,
-            to_char(w.study_day, 'YYYY-MM-DD') as study_day,
             to_char(((r.first_at at time zone $1::text) - make_interval(hours => $2::int))::date,
                     'YYYY-MM-DD') as first_review_day,
-            coalesce(r.s2r_wrong, 0)::int as s2r_wrong,
             coalesce(h.history, '') as history,
             to_char(h.last_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as last_answered_at
        from words w
-       left join (select word_id, min(reviewed_at) as first_at,
-                         count(*) filter (where prompt_type = 's2r' and not correct
-                                            and not in_session_retry and not practice
-                                            and not test) as s2r_wrong
+       left join (select word_id, min(reviewed_at) as first_at
                     from reviews group by word_id) r on r.word_id = w.id
        left join (select word_id,
                          -- 읽기를 틀렸거나 뜻 점수가 모자라면 0. 뜻을 묻지 않던 때의 답(null)은 읽기만 본다.
@@ -79,9 +74,7 @@ async function fetchCandidates(dayStartHour: number): Promise<TestCandidate[]> {
     reading: string;
     stage: number;
     suspended: boolean;
-    study_day: string;
     first_review_day: string | null;
-    s2r_wrong: number;
     history: string;
     last_answered_at: string | null;
   }[];
@@ -89,11 +82,9 @@ async function fetchCandidates(dayStartHour: number): Promise<TestCandidate[]> {
     id: r.id,
     surface: r.surface,
     reading: r.reading,
-    study_day: r.study_day,
     stage: r.stage,
     suspended: r.suspended,
     firstReviewDay: r.first_review_day,
-    s2rWrong: r.s2r_wrong,
     history: [...r.history].map((c) => c === "1"),
     lastAnsweredAt: r.last_answered_at,
   }));

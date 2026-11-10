@@ -4,8 +4,11 @@ import type { TestQuestion } from "@/lib/types";
 /** 읽기를 낸 뒤의 결과. null 이면 아직 답하기 전이다. blocks 는 틀렸을 때만 채운다. */
 export type Verdict = { correct: boolean; blocks: DiffBlock[] } | null;
 
-/** 뜻을 낸 뒤의 결과. credit: 1 정답, 0.5 부분 정답, 0 오답. typed 는 친 뜻이다. */
-export type MeaningVerdict = { credit: 0 | 0.5 | 1; typed: string } | null;
+/**
+ * 뜻을 낸 뒤의 결과. credit: 1 정답, 0.5 부분 정답, 0 오답. typed 는 친 뜻이다.
+ * accepted: 「이것도 정답」으로 친 뜻을 뜻 목록에 더하고 정답으로 바꿨다(credit 은 1).
+ */
+export type MeaningVerdict = { credit: 0 | 0.5 | 1; typed: string; accepted?: boolean } | null;
 
 /* ------------------------------------------------------------------ *
  * 문제 칸과 판정 줄 — 표시 전용
@@ -67,17 +70,31 @@ export function QuestionFace({
   );
 }
 
-/** 뜻 판정 줄. 윗줄에 맞음 · 부분 정답 · 틀림, 정답이 아니면 아랫줄에 내 답(정답 뜻은 위 문제 칸에 나와 있다). */
+/**
+ * 뜻 판정 줄. 윗줄에 맞음 · 부분 정답 · 틀림, 정답이 아니면 아랫줄에 내 답(정답 뜻은 위 문제 칸에 나와 있다).
+ * 「이것도 정답」을 눌렀으면 윗줄은 정답으로 쳤다는 것, 아랫줄은 뜻 목록에 더한 낱말이다.
+ */
 export function MeaningVerdictLine({ verdict }: { verdict: NonNullable<MeaningVerdict> }) {
   const tone = verdict.credit === 1 ? "text-accent" : verdict.credit === 0.5 ? "text-warn" : "text-danger";
-  const label =
-    verdict.credit === 1 ? "맞았습니다" : verdict.credit === 0.5 ? "부분 정답 (0.5점)" : "틀렸습니다";
+  const label = verdict.accepted
+    ? "정답으로 쳤습니다"
+    : verdict.credit === 1
+      ? "맞았습니다"
+      : verdict.credit === 0.5
+        ? "부분 정답 (0.5점)"
+        : "틀렸습니다";
   return (
     <>
       <p className={`text-[15px] font-semibold ${tone}`}>
         <span className="font-normal text-muted">뜻 · </span>
         {label}
       </p>
+      {verdict.accepted && (
+        <p className="max-w-full truncate text-base">
+          <span className="text-muted">뜻에 더함 </span>
+          {verdict.typed}
+        </p>
+      )}
       {verdict.credit < 1 && (
         <p className="max-w-full truncate text-base">
           <span className="sr-only">내 답 </span>

@@ -7,7 +7,7 @@ import {
   wordUpdateQueries,
 } from "@/lib/grade-apply";
 import { fetchTestWordRows, fetchUnansweredTestWordIds } from "@/lib/queries";
-import { judgeMeaning, meaningPassed, withAcceptedMeaning } from "@/lib/meaning-answer";
+import { addAcceptedMeaning, judgeMeaning, judgedMeaning, meaningPassed } from "@/lib/meaning-answer";
 import { judgeReading } from "@/lib/reading-answer";
 import { getSettingsAndToday } from "@/lib/settings";
 import { planTestGrades } from "@/lib/srs";
@@ -80,8 +80,10 @@ export async function POST(req: Request) {
 
     // 서버가 다시 채점한다. 채점할 수 없는 답(한자가 섞인 것 · 비교할 글자가 없는 뜻)은 건너뛰어 그 문항을 안 푼 채로 둔다.
     // 뜻 답이 있으면 읽기와 한 문항으로 함께 반영한다. 뜻 답이 없는 요청(예전 화면)은 읽기만 반영한다.
-    // 「이것도 정답」을 누른 답은 친 뜻을 단어의 뜻 목록에 더한 뒤 그 목록으로 채점한다(정답이 된다).
-    // 더한 목록(addTo)은 아래 트랜잭션에서 문항과 함께 단어에 적는다. 이미 정답이면 더하지 않는다.
+    // 뜻은 단어장 뜻(meaning_ko)에 지난번까지 「이것도 정답」으로 더한 뜻(accepted_meanings)을 이어 붙인 것으로 채점한다.
+    // 이번에 「이것도 정답」을 누른 답은 친 뜻을 그 목록에 더한 뒤 다시 채점한다(정답이 된다). 더한 목록(addTo)은 아래
+    // 트랜잭션에서 문항과 함께 words.accepted_meanings 에 적는다. meaning_ko 는 건드리지 않는다 — 복습 카드에 보이면 안 된다.
+    // 이미 정답이면 더하지 않는다.
     const judged = new Map<
       string,
       {
@@ -97,13 +99,14 @@ export async function POST(req: Request) {
       if (j.result === "invalid") continue;
       let meaning: { typed: string; credit: number; addTo: string | null } | null = null;
       if (a.typedMeaning !== undefined) {
-        const accepted = a.acceptMeaning ? withAcceptedMeaning(word.meaning_ko, a.typedMeaning) : null;
-        const m = judgeMeaning(a.typedMeaning, accepted ?? word.meaning_ko);
+        const before = word.accepted_meanings?.trim() ?? "";
+        const after = a.acceptMeaning ? addAcceptedMeaning(word.meaning_ko, before, a.typedMeaning) : null;
+        const m = judgeMeaning(a.typedMeaning, judgedMeaning(word.meaning_ko, after ?? before));
         if (m.result === "invalid") continue;
         meaning = {
           typed: m.typed,
           credit: m.credit,
-          addTo: accepted !== null && accepted !== word.meaning_ko ? accepted : null,
+          addTo: after !== null && after !== before ? after : null,
         };
       }
       judged.set(a.wordId, { kana: j.kana, correct: j.result === "correct", meaning });
@@ -171,7 +174,7 @@ export async function POST(req: Request) {
       ...plan.flatMap((item) => {
         const addTo = judged.get(item.wordId)!.meaning?.addTo;
         return addTo
-          ? [sql.query(`update words set meaning_ko = $2 where id = $1::uuid`, [item.wordId, addTo])]
+          ? [sql.query(`update words set accepted_meanings = $2 where id = $1::uuid`, [item.wordId, addTo])]
           : [];
       }),
       reviewInsertQuery(sql, plan, { test: true }),

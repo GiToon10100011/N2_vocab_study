@@ -23,8 +23,11 @@ import {
  * date / timestamptz 는 드라이버마다 파싱 결과가 달라지므로 전부 문자열로 고정해서 받는다.
  * (앱 전체가 'YYYY-MM-DD' 문자열을 전제로 동작한다)
  */
+// accepted_meanings(「이것도 정답」으로 더한 뜻)는 to_jsonb 로 읽는다 — 열이 아직 없는 DB 에 코드가 먼저 올라가도 단어 조회가
+// 죽지 않게 하려는 것이다. 이 열은 채점과 단어 수정 창에만 쓰이고, 복습 카드로는 toQueueWord 가 싣지 않는다.
 const WORD_COLS = `
   id, surface, reading, meaning_ko, note,
+  to_jsonb(words) ->> 'accepted_meanings' as accepted_meanings,
   to_char(study_day, 'YYYY-MM-DD') as study_day,
   to_char(created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as created_at,
   stage,
@@ -392,16 +395,34 @@ export async function searchWords(
 
 export async function updateWordRow(
   id: string,
-  /** study_day 가 null 이면 기존 값을 유지한다. */
-  patch: { surface: string; reading: string; meaning_ko: string; study_day: string | null },
+  /**
+   * study_day 가 null 이면 기존 값을 유지한다.
+   * accepted_meanings 는 키가 있을 때만 고친다(null 이면 비운다). 없으면 열을 건드리지 않아, 열이 없는 DB 에서도
+   * 다른 수정이 그대로 된다.
+   */
+  patch: {
+    surface: string;
+    reading: string;
+    meaning_ko: string;
+    study_day: string | null;
+    accepted_meanings?: string | null;
+  },
 ): Promise<Word | null> {
+  const withAccepted = patch.accepted_meanings !== undefined;
   const rows = await db().query(
     `update words
         set surface = $2, reading = $3, meaning_ko = $4,
-            study_day = coalesce($5::date, study_day)
+            study_day = coalesce($5::date, study_day)${withAccepted ? ", accepted_meanings = $6" : ""}
       where id = $1::uuid
       returning ${WORD_COLS}`,
-    [id, patch.surface, patch.reading, patch.meaning_ko, patch.study_day],
+    [
+      id,
+      patch.surface,
+      patch.reading,
+      patch.meaning_ko,
+      patch.study_day,
+      ...(withAccepted ? [patch.accepted_meanings] : []),
+    ],
   );
   return (rows as unknown as Word[])[0] ?? null;
 }
@@ -496,13 +517,16 @@ export interface TestWordRow extends SrsRow {
   surface: string;
   reading: string;
   meaning_ko: string;
+  /** 「이것도 정답」으로 더한 뜻. 열이 없는 DB 에서는 null */
+  accepted_meanings: string | null;
 }
 
-/** 테스트 답을 서버가 다시 채점하는 데 필요한 단어 행: 표기 · 읽기 · 뜻 + SRS 상태. */
+/** 테스트 답을 서버가 다시 채점하는 데 필요한 단어 행: 표기 · 읽기 · 뜻 · 더한 뜻 + SRS 상태. */
 export async function fetchTestWordRows(ids: string[]): Promise<TestWordRow[]> {
   if (ids.length === 0) return [];
   const rows = await db().query(
-    `select id, surface, reading, meaning_ko, stage, correct_count, wrong_count, streak, last_wrong_type
+    `select id, surface, reading, meaning_ko, to_jsonb(words) ->> 'accepted_meanings' as accepted_meanings,
+            stage, correct_count, wrong_count, streak, last_wrong_type
        from words where id = any($1::uuid[])`,
     [ids],
   );

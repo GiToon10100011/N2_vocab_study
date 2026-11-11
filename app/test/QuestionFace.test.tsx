@@ -71,12 +71,12 @@ describe("실전 테스트 문제 누출 방지", () => {
     expect(wrong).toContain("구체적");
   });
 
-  it("「이것도 정답」을 누른 뒤의 판정 줄은 정답으로 쳤다는 것과 뜻에 더한 낱말을 보여 준다", () => {
+  it("「이것도 정답」을 누른 뒤의 판정 줄은 정답으로 쳤다는 것과 인정한 낱말을 보여 준다", () => {
     const line = renderToStaticMarkup(
       <MeaningVerdictLine verdict={{ credit: 1, typed: "바늘", accepted: true }} />,
     );
     expect(line).toContain("정답으로 쳤습니다");
-    expect(line).toContain("뜻에 더함");
+    expect(line).toContain("인정한 뜻");
     expect(line).toContain("바늘");
     expect(line).not.toContain("맞았습니다");
     expect(line).not.toContain("내 답");

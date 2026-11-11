@@ -195,6 +195,10 @@ alter table typing_test_items add column if not exists typed_meaning text;
 alter table typing_test_items add column if not exists meaning_credit real
   constraint typing_test_items_meaning_credit check (meaning_credit in (0, 0.5, 1));
 
+-- 실전 테스트의 「이것도 정답」으로 더한 뜻(쉼표 목록). 채점에만 쓰고 meaning_ko 와 따로 둔다.
+-- meaning_ko 에 섞으면 단어 복습 카드와 단어 목록에 그대로 보이기 때문이다. 비어 있으면 null.
+alter table words add column if not exists accepted_meanings text;
+
 -- 실전 테스트 한 번의 문제 수. 한 번에 20분을 넘기지 않게 사용자가 조정한다.
 alter table settings add column if not exists test_size smallint not null default 40
   constraint settings_test_size check (test_size between 10 and 100);

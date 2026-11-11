@@ -119,6 +119,7 @@ export async function loadTestSession(testDay: string): Promise<TestSessionData>
   const rows = (await db().query(
     // 뜻 답 열은 to_jsonb 로 읽는다. 열이 아직 없는 DB 에서도 테스트 화면이 열리게 하려는 것이다.
     `select i.word_id, w.surface, w.reading, w.meaning_ko, w.suspended,
+            to_jsonb(w) ->> 'accepted_meanings' as accepted_meanings,
             i.typed, i.correct, i.answered_at is not null as answered,
             to_jsonb(i) ->> 'typed_meaning' as typed_meaning,
             (to_jsonb(i) ->> 'meaning_credit')::float8 as meaning_credit
@@ -131,6 +132,7 @@ export async function loadTestSession(testDay: string): Promise<TestSessionData>
     reading: string;
     meaning_ko: string;
     suspended: boolean;
+    accepted_meanings: string | null;
     typed: string | null;
     correct: boolean | null;
     answered: boolean;
@@ -143,6 +145,7 @@ export async function loadTestSession(testDay: string): Promise<TestSessionData>
     surface: r.surface,
     reading: r.reading,
     meaning_ko: r.meaning_ko,
+    acceptedMeanings: r.accepted_meanings,
   });
   return {
     testDay,

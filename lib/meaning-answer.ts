@@ -253,17 +253,31 @@ export function judgeMeaning(input: string, meaning: string): MeaningJudgement {
 }
 
 /**
- * 「이것도 정답」: 친 뜻을 정답 뜻 목록 끝에 쉼표로 더한 문자열. 단어장에 그대로 남는다(플래시카드 뜻에도 보인다).
- * 동의어(침 / 바늘)는 철자로 알아볼 수 없어서 사용자가 직접 정답으로 치는 길이다. 읽기에는 이 길이 없다.
- * 이미 정답으로 판정되면 그대로 돌려준다 — 두 번 눌리거나 같은 답이 다시 와도 두 번 붙지 않는다.
- * 판정할 수 없는 입력이면 null. 홀로 남은 자모와 겹친 공백은 걷고 붙인다.
+ * 판정에 쓰는 정답 뜻: 단어장 뜻(meaning_ko) 뒤에 「이것도 정답」으로 더한 뜻을 쉼표로 이어 붙인다.
+ * 더한 뜻은 meaning_ko 와 따로 둔다(words.accepted_meanings) — 섞으면 단어 복습 카드와 단어 목록에 그대로 보인다.
  */
-export function withAcceptedMeaning(meaning: string, typed: string): string | null {
-  const j = judgeMeaning(typed, meaning);
+export function judgedMeaning(meaning: string, accepted?: string | null): string {
+  const extra = accepted?.trim();
+  return extra ? `${meaning.trim()}, ${extra}` : meaning;
+}
+
+/**
+ * 「이것도 정답」: 친 뜻을 더한 뒤의 「더한 뜻 목록」(accepted). 판정할 수 없는 입력이면 null.
+ * 동의어(침 / 바늘)는 철자로 알아볼 수 없어서 사용자가 직접 정답으로 치는 길이다. 읽기에는 이 길이 없다.
+ * 이미 정답으로 판정되는 뜻이면 목록을 그대로 돌려준다(없으면 빈 문자열) — 두 번 눌리거나 같은 답이 다시 와도
+ * 두 번 붙지 않는다. 홀로 남은 자모와 겹친 공백은 걷고 붙인다.
+ */
+export function addAcceptedMeaning(
+  meaning: string,
+  accepted: string | null | undefined,
+  typed: string,
+): string | null {
+  const current = accepted?.trim() ?? "";
+  const j = judgeMeaning(typed, judgedMeaning(meaning, current));
   if (j.result === "invalid") return null;
-  if (j.credit === MEANING_FULL) return meaning;
+  if (j.credit === MEANING_FULL) return current;
   const add = typed.normalize("NFKC").replace(STRAY_JAMO, "").replace(/\s+/g, " ").trim();
-  return `${meaning.trim()}, ${add}`;
+  return current ? `${current}, ${add}` : add;
 }
 
 /** 이 점수를 단어 복습에서 맞힌 것으로 치는가. 뜻을 묻지 않은 옛 답(null)은 읽기만 본다. */

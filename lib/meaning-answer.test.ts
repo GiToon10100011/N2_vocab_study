@@ -2,12 +2,13 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   MEANING_PASS_MIN,
+  addAcceptedMeaning,
   expectedForms,
   judgeMeaning,
+  judgedMeaning,
   meaningPassed,
   rootsClose,
   similarity,
-  withAcceptedMeaning,
 } from "./meaning-answer";
 
 const credit = (typed: string, meaning: string) => {
@@ -177,25 +178,36 @@ describe("판정할 수 없는 입력", () => {
   });
 });
 
-describe("「이것도 정답」으로 뜻 목록에 더하기", () => {
-  it("친 뜻을 쉼표로 붙이고, 붙인 뒤에는 그 답이 정답이다", () => {
-    expect(withAcceptedMeaning("침", "바늘")).toBe("침, 바늘");
-    expect(credit("바늘", withAcceptedMeaning("침", "바늘")!)).toBe(1);
-    expect(withAcceptedMeaning("불만, 고충, 불편", "불평")).toBe("불만, 고충, 불편, 불평"); // 부분 정답도 붙인다
+describe("「이것도 정답」으로 더한 뜻", () => {
+  it("판정에 쓰는 뜻은 단어장 뜻 뒤에 더한 뜻을 이어 붙인 것이다 — 더한 뜻이 없으면 단어장 뜻 그대로", () => {
+    expect(judgedMeaning("침", null)).toBe("침");
+    expect(judgedMeaning("침", undefined)).toBe("침");
+    expect(judgedMeaning("침", "  ")).toBe("침");
+    expect(judgedMeaning("침", "바늘")).toBe("침, 바늘");
+    expect(credit("바늘", judgedMeaning("침", "바늘"))).toBe(1);
+    expect(credit("바늘", judgedMeaning("침", null))).toBe(0);
   });
 
-  it("이미 정답이면 그대로 둔다 — 두 번 붙지 않는다", () => {
-    expect(withAcceptedMeaning("침, 바늘", "바늘")).toBe("침, 바늘");
-    expect(withAcceptedMeaning("참음, 용서", "참다")).toBe("참음, 용서");
+  it("더한 뜻 목록에 친 뜻을 붙이고, 붙인 뒤에는 그 답이 정답이다 — 단어장 뜻은 건드리지 않는다", () => {
+    expect(addAcceptedMeaning("침", null, "바늘")).toBe("바늘");
+    expect(addAcceptedMeaning("침", "바늘", "침술")).toBe("바늘, 침술");
+    expect(credit("침술", judgedMeaning("침", addAcceptedMeaning("침", "바늘", "침술")))).toBe(1);
+    expect(addAcceptedMeaning("불만, 고충, 불편", null, "불평")).toBe("불평"); // 부분 정답도 붙인다
+  });
+
+  it("이미 정답이면 목록을 그대로 둔다 — 두 번 붙지 않는다", () => {
+    expect(addAcceptedMeaning("침, 바늘", null, "바늘")).toBe("");
+    expect(addAcceptedMeaning("참음, 용서", null, "참다")).toBe("");
+    expect(addAcceptedMeaning("침", "바늘", "바늘")).toBe("바늘");
   });
 
   it("홀로 남은 자모와 겹친 공백은 걷고 붙인다", () => {
-    expect(withAcceptedMeaning("침", "  뾰족한   바ㅁ늘 ")).toBe("침, 뾰족한 바늘");
+    expect(addAcceptedMeaning("침", null, "  뾰족한   바ㅁ늘 ")).toBe("뾰족한 바늘");
   });
 
   it("판정할 수 없는 입력이면 붙이지 않는다", () => {
-    expect(withAcceptedMeaning("침", "...")).toBeNull();
-    expect(withAcceptedMeaning("침", "ㅋㅋ")).toBeNull();
+    expect(addAcceptedMeaning("침", null, "...")).toBeNull();
+    expect(addAcceptedMeaning("침", "바늘", "ㅋㅋ")).toBeNull();
   });
 });
 

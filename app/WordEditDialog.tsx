@@ -25,6 +25,7 @@ export function WordEditDialog({
   const [surface, setSurface] = useState(word.surface);
   const [reading, setReading] = useState(word.reading);
   const [meaning, setMeaning] = useState(word.meaning_ko);
+  const [accepted, setAccepted] = useState(word.accepted_meanings ?? "");
   const [day, setDay] = useState(word.study_day);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -58,6 +59,8 @@ export function WordEditDialog({
       reading: readingKana,
       meaning_ko: meaning.trim(),
       study_day: day,
+      // 바꾸지 않았으면 보내지 않는다 — 열이 없는 DB 에서도 다른 수정이 그대로 되고, 이 값이 없는 곳에서 연 창이 지우지 않는다.
+      ...(accepted.trim() !== (word.accepted_meanings ?? "").trim() ? { accepted_meanings: accepted } : {}),
     });
     setBusy(false);
     if (res.ok) onSaved(res.word);
@@ -133,6 +136,20 @@ export function WordEditDialog({
               lang="ko"
               className="rounded-lg border border-border bg-bg px-3 py-2.5 outline-none focus:border-accent"
             />
+          </label>
+
+          <label className="flex flex-col gap-1">
+            <span className="text-xs text-muted">정답으로만 인정하는 뜻</span>
+            <input
+              value={accepted}
+              onChange={(e) => setAccepted(e.target.value)}
+              lang="ko"
+              placeholder="쉼표로 나눕니다"
+              className="rounded-lg border border-border bg-bg px-3 py-2.5 outline-none focus:border-accent"
+            />
+            <span className="text-xs text-muted">
+              실전 테스트의 「이것도 정답」으로 더해집니다. 채점에만 쓰이고 복습 카드에는 보이지 않습니다. 잘못 더했으면 여기서 지웁니다.
+            </span>
           </label>
 
           <label className="flex flex-col gap-1">

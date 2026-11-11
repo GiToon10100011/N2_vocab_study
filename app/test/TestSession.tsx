@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { createUndoBuffer, releaseUndoBuffer } from "@/lib/grade-client";
 import type { UndoBuffer } from "@/lib/grade-outbox";
-import { judgeMeaning, meaningPassed, withAcceptedMeaning } from "@/lib/meaning-answer";
+import { addAcceptedMeaning, judgeMeaning, judgedMeaning, meaningPassed } from "@/lib/meaning-answer";
 import { convertAnswer, judgeReading } from "@/lib/reading-answer";
 import { diffSyllables, type DiffBlock } from "@/lib/syllable-diff";
 import type { TestAnswered, TestQuestion } from "@/lib/types";
@@ -105,8 +105,6 @@ export function TestSession({
   const [step, setStep] = useState<Step>("reading");
   const [readingResult, setReadingResult] = useState<ReadingResult | null>(null);
   const [meaningResult, setMeaningResult] = useState<MeaningVerdict>(null);
-  /** 「이것도 정답」으로 친 뜻을 더한 이 문제의 뜻 목록. 위 문제 칸의 정답 뜻이 이것으로 바뀐다. */
-  const [acceptedMeaning, setAcceptedMeaning] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [finished, setFinished] = useState(questions.length === 0);
   /** 이번에 푼 문제의 기록. 뜻까지 낸 문제만 들어온다. */
@@ -164,7 +162,8 @@ export function TestSession({
 
   function submitMeaning() {
     if (!question || !readingResult || step !== "meaning" || blockedRef.current) return;
-    const m = judgeMeaning(input, question.meaning_ko);
+    // 단어장 뜻에 지난번까지 「이것도 정답」으로 더한 뜻을 이어 붙인 것으로 채점한다. 서버도 같은 목록으로 다시 채점한다.
+    const m = judgeMeaning(input, judgedMeaning(question.meaning_ko, question.acceptedMeanings));
     if (m.result === "invalid") {
       // 비교할 글자가 없다(문장부호뿐). 빈 입력은 아무것도 하지 않는다.
       if (input.trim() !== "") setMessage("뜻을 글자로 입력하세요");
@@ -197,14 +196,14 @@ export function TestSession({
   }
 
   /**
-   * 「이것도 정답」: 친 뜻을 이 단어의 뜻 목록에 더하고 정답으로 친다(동의어는 철자로 알아볼 수 없다).
-   * 방금 보관한 답을 꺼내 표시를 붙여 다시 넣는다. 서버가 같은 함수로 뜻 목록을 고치고 다시 채점한다.
+   * 「이것도 정답」: 친 뜻을 이 단어의 「더한 뜻」 목록에 넣고 정답으로 친다(동의어는 철자로 알아볼 수 없다).
+   * 방금 보관한 답을 꺼내 표시를 붙여 다시 넣는다. 서버가 같은 함수로 목록을 고치고 다시 채점한다.
+   * 단어의 뜻(meaning_ko)은 바뀌지 않는다 — 문제 칸의 정답 뜻도, 단어 복습 카드도 그대로다.
    */
   function acceptMeaning() {
     if (!question || !readingResult || !meaningResult || step !== "meaning-result" || blockedRef.current) return;
     if (meaningResult.credit === 1) return;
-    const meaning = withAcceptedMeaning(question.meaning_ko, meaningResult.typed);
-    if (meaning === null) return;
+    if (addAcceptedMeaning(question.meaning_ko, question.acceptedMeanings, meaningResult.typed) === null) return;
     const buffer = bufferRef.current;
     // 다른 탭이 이미 가져가 보냈다. 서버에 간 답은 고치지 않는다.
     if (!buffer || !buffer.undo()) {
@@ -220,15 +219,8 @@ export function TestSession({
       typedMeaning: meaningResult.typed,
       acceptMeaning: true,
     });
-    setAcceptedMeaning(meaning);
     setMeaningResult({ credit: 1, typed: meaningResult.typed, accepted: true });
-    setDone((d) =>
-      d.map((r) =>
-        r.question.wordId === question.wordId
-          ? { ...r, question: { ...r.question, meaning_ko: meaning }, meaningCredit: 1 }
-          : r,
-      ),
-    );
+    setDone((d) => d.map((r) => (r.question.wordId === question.wordId ? { ...r, meaningCredit: 1 } : r)));
     setMessage(null);
   }
 
@@ -246,7 +238,6 @@ export function TestSession({
     setStep("reading");
     setReadingResult(null);
     setMeaningResult(null);
-    setAcceptedMeaning(null);
     setMessage(null);
   }
 
@@ -427,11 +418,7 @@ export function TestSession({
           data-keyboard={viewport?.keyboard ? "open" : undefined}
           className="test-stage min-h-0 flex-1 py-2"
         >
-          <QuestionFace
-            question={acceptedMeaning ? { ...question, meaning_ko: acceptedMeaning } : question}
-            readingShown={step !== "reading"}
-            meaningShown={step === "meaning-result"}
-          />
+          <QuestionFace question={question} readingShown={step !== "reading"} meaningShown={step === "meaning-result"} />
         </section>
 
         {/* 판정 줄: 두 줄 자리를 늘 잡아 둔다. 판정이 한 줄을 넘겨도 아래 칸 높이가 그대로라 문제가 움직이지 않는다.

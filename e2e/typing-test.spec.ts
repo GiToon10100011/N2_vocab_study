@@ -49,6 +49,14 @@ async function meaningOf(surface: string): Promise<string> {
   return rows[0].meaning_ko;
 }
 
+/** 「이것도 정답」으로 더한 뜻. 단어의 뜻(meaning_ko)과 따로 있다 — 복습 카드에 보이면 안 된다. */
+async function acceptedOf(surface: string): Promise<string | null> {
+  const rows = (await sql().query(`select accepted_meanings from words where surface = $1`, [surface])) as {
+    accepted_meanings: string | null;
+  }[];
+  return rows[0].accepted_meanings;
+}
+
 async function reviewCount(): Promise<number> {
   const rows = (await sql().query(`select count(*)::int as n from reviews where not (prompt_type = 'learn')`)) as {
     n: number;
@@ -287,7 +295,7 @@ test.describe("실전 테스트 화면", () => {
     await expect(page.getByTestId("verdict")).toContainText("맞았습니다");
   });
 
-  test("뜻을 틀리면 「이것도 정답」으로 친 뜻을 뜻 목록에 더하고 정답으로 칠 수 있다 — Enter 는 늘 다음이다", async ({
+  test("뜻을 틀리면 「이것도 정답」으로 친 뜻을 정답으로 인정할 수 있다 — 단어의 뜻은 그대로고 Enter 는 늘 다음이다", async ({
     page,
   }) => {
     await startFromHome(page);
@@ -304,7 +312,10 @@ test.describe("실전 테스트 화면", () => {
     const accept = page.getByTestId("accept-meaning");
     await accept.click();
     await expect(page.getByTestId("verdict")).toContainText("정답으로 쳤습니다");
-    await expect(page.getByTestId("verdict")).toContainText(`${original}, ${synonym}`); // 문제 칸의 정답 뜻
+    await expect(page.getByTestId("verdict")).toContainText(`인정한 뜻 ${synonym}`);
+    // 문제 칸의 정답 뜻은 단어의 뜻 그대로다 — 인정한 뜻이 섞여 보이지 않는다
+    await expect(page.getByTestId("question-stage")).toContainText(original);
+    await expect(page.getByTestId("question-stage")).not.toContainText(synonym);
     await expect(accept).toHaveCount(0);
     await expect(meaningBox(page)).toBeFocused(); // 눌러도 입력칸 포커스를 잃지 않는다(아이폰 키보드)
     await meaningBox(page).press("Enter"); // 다음
@@ -316,7 +327,9 @@ test.describe("실전 테스트 화면", () => {
     await expect(page.getByTestId("result-detail")).toContainText("뜻 2 / 3");
 
     // 끝 화면이 뜰 때 남은 답을 보낸다. 반영될 때까지 기다린다.
-    await expect.poll(() => meaningOf(first)).toBe(`${original}, ${synonym}`);
+    await expect.poll(() => acceptedOf(first)).toBe(synonym);
+    expect(await meaningOf(first)).toBe(original); // 단어의 뜻은 그대로다
+    expect(await acceptedOf(second)).toBeNull(); // Enter 로 넘긴 단어에는 아무것도 더하지 않는다
     expect(await meaningOf(second)).toBe(WORDS.find((w) => w.surface === second)!.meaning);
     expect(await meaningRows()).toContainEqual({ surface: first, typed_meaning: synonym, meaning_credit: 1 });
     expect(await meaningRows()).toContainEqual({
@@ -326,6 +339,26 @@ test.describe("실전 테스트 화면", () => {
     });
     expect(await wordRow(first)).toMatchObject({ stage: 3, wrong_count: 0 });
     expect(await wordRow(second)).toMatchObject({ stage: 1, last_wrong_type: "s2m" });
+  });
+
+  test("지난번에 더해 둔 뜻을 치면 화면이 바로 정답으로 판정하고 서버도 같은 판정을 한다", async ({ page }) => {
+    for (const w of WORDS) {
+      await sql().query(`update words set accepted_meanings = $2 where surface = $1`, [
+        w.surface,
+        MEANING[w.surface].wrong,
+      ]);
+    }
+    await startFromHome(page);
+    await solve(page, { meaning: "wrong" });
+    await solve(page, { meaning: "wrong" });
+    await solve(page, { meaning: "wrong" });
+    await expect(page.getByTestId("result-summary")).toHaveText("3문제 중 3개");
+    await expect(page.getByTestId("result-detail")).toContainText("뜻 3 / 3");
+
+    await expect
+      .poll(async () => (await meaningRows()).filter((r) => (r as { meaning_credit: number }).meaning_credit === 1).length)
+      .toBe(3);
+    for (const w of WORDS) expect(await wordRow(w.surface)).toMatchObject({ stage: 3, wrong_count: 0 });
   });
 
   test("한자가 섞인 입력은 채점하지 않고, IME 확정 Enter(keyCode 229)는 제출하지 않는다 (Review Focus 1)", async ({
@@ -625,7 +658,7 @@ test.describe("테스트 답 반영 (/api/test-answers)", () => {
     expect(await reviewCount()).toBe(2); // 읽기 줄 + 뜻 줄, 한 번씩
   });
 
-  test("「이것도 정답」을 누른 뜻은 단어의 뜻 목록에 더하고 정답으로 친다 — 같은 묶음이 다시 와도 두 번 붙지 않는다", async ({
+  test("「이것도 정답」을 누른 뜻은 단어의 「더한 뜻」에 넣고 정답으로 친다 — 단어의 뜻은 그대로고, 같은 묶음이 다시 와도 두 번 붙지 않는다", async ({
     page,
   }) => {
     const answers = [
@@ -634,7 +667,9 @@ test.describe("테스트 답 반영 (/api/test-answers)", () => {
       { wordId: await wordId("抽象的"), typed: "ちゅうしょうてき", typedMeaning: "추상적", acceptMeaning: true },
     ];
     expect(await (await post(page, "zz-accept-0001", answers)).json()).toEqual({ ok: true, applied: 2 });
-    expect(await meaningOf("環境")).toBe("환경, 주위");
+    expect(await acceptedOf("環境")).toBe("주위");
+    expect(await meaningOf("環境")).toBe("환경"); // 복습 카드가 그리는 뜻은 그대로다
+    expect(await acceptedOf("抽象的")).toBeNull(); // 이미 정답인 뜻은 더하지 않는다
     expect(await meaningOf("抽象的")).toBe("추상적");
     expect(await meaningRows()).toEqual([
       { surface: "抽象的", typed_meaning: "추상적", meaning_credit: 1 },
@@ -647,17 +682,37 @@ test.describe("테스트 답 반영 (/api/test-answers)", () => {
       applied: 0,
       duplicate: true,
     });
-    expect(await meaningOf("環境")).toBe("환경, 주위");
+    expect(await acceptedOf("環境")).toBe("주위");
+    expect(await meaningOf("環境")).toBe("환경");
     expect(await reviewCount()).toBe(4);
   });
 
-  test("「이것도 정답」 표시가 없으면 같은 뜻이라도 단어의 뜻 목록을 바꾸지 않는다", async ({ page }) => {
+  test("「이것도 정답」 표시가 없으면 같은 뜻이라도 더한 뜻을 바꾸지 않는다", async ({ page }) => {
     const res = await post(page, "zz-accept-0002", [
       { wordId: await wordId("環境"), typed: "かんきょう", typedMeaning: "주위" },
     ]);
     expect(await res.json()).toEqual({ ok: true, applied: 1 });
+    expect(await acceptedOf("環境")).toBeNull();
     expect(await meaningOf("環境")).toBe("환경");
     expect(await meaningRows()).toContainEqual({ surface: "環境", typed_meaning: "주위", meaning_credit: 0 });
+  });
+
+  test("더해 둔 뜻은 표시 없이도 정답이고, 다른 뜻으로 또 누르면 목록 뒤에 이어 붙는다", async ({ page }) => {
+    await sql().query(`update words set accepted_meanings = '주위' where surface = '環境'`);
+    await sql().query(`update words set accepted_meanings = '관념적' where surface = '抽象的'`);
+    const res = await post(page, "zz-accept-0003", [
+      { wordId: await wordId("環境"), typed: "かんきょう", typedMeaning: "주위" }, // 더해 둔 뜻: 표시 없이 정답
+      { wordId: await wordId("抽象的"), typed: "ちゅうしょうてき", typedMeaning: "비현실", acceptMeaning: true },
+    ]);
+    expect(await res.json()).toEqual({ ok: true, applied: 2 });
+    expect(await meaningRows()).toEqual([
+      { surface: "抽象的", typed_meaning: "비현실", meaning_credit: 1 },
+      { surface: "環境", typed_meaning: "주위", meaning_credit: 1 },
+    ]);
+    expect(await acceptedOf("環境")).toBe("주위"); // 이미 정답이니 그대로
+    expect(await acceptedOf("抽象的")).toBe("관념적, 비현실");
+    expect(await meaningOf("抽象的")).toBe("추상적");
+    expect(await wordRow("環境")).toMatchObject({ stage: 3, correct_count: 1, wrong_count: 0 });
   });
 });
 
@@ -691,8 +746,29 @@ test.describe("「이것도 정답」과 묶어 보내기", () => {
     await expect(page.getByTestId("result-summary")).toHaveText("11문제 중 11개");
 
     await expect.poll(async () => (await itemRows()).filter((r) => (r as { answered: boolean }).answered).length).toBe(11);
-    expect(await meaningOf(tenth)).toBe(`뜻${tenth}, 엉뚱`);
+    expect(await acceptedOf(tenth)).toBe("엉뚱");
+    expect(await meaningOf(tenth)).toBe(`뜻${tenth}`);
     expect(await meaningRows()).toContainEqual({ surface: tenth, typed_meaning: "엉뚱", meaning_credit: 1 });
+  });
+});
+
+test.describe("더한 뜻은 복습 카드와 단어 목록에 보이지 않는다", () => {
+  test("「이것도 정답」으로 더한 뜻이 들어 있어도 카드 앞뒤와 단어 목록에는 단어의 뜻만 나온다", async ({ page }) => {
+    await seedTestable(WORDS);
+    await sql().query(`update words set accepted_meanings = '주위', next_review = current_date where surface = '環境'`);
+
+    await page.goto("/study");
+    await expect(page.locator("main")).toBeVisible();
+    expect(await page.locator("main").innerText()).not.toContain("주위");
+    await page.keyboard.press("Space");
+    const back = await page.locator("main").innerText();
+    expect(back).toContain("환경"); // 뒷면에는 단어의 뜻이 나온다
+    expect(back).not.toContain("주위");
+
+    await page.goto("/words");
+    const list = await page.locator("main").innerText();
+    expect(list).toContain("환경");
+    expect(list).not.toContain("주위");
   });
 });
 
@@ -883,6 +959,10 @@ async function restoreNewSchema() {
                    where table_name = 'settings' and column_name = 'test_size_off') then
          alter table settings rename column test_size_off to test_size;
        end if;
+       if exists (select 1 from information_schema.columns
+                   where table_name = 'words' and column_name = 'accepted_meanings_off') then
+         alter table words rename column accepted_meanings_off to accepted_meanings;
+       end if;
      end $$`,
   );
 }
@@ -954,13 +1034,21 @@ test.describe("스키마보다 코드가 먼저 올라간 DB (Review Focus 4)", 
     await startTest(2);
     await sql().query(`alter table typing_test_items rename column typed_meaning to typed_meaning_off`);
     await sql().query(`alter table typing_test_items rename column meaning_credit to meaning_credit_off`);
+    await sql().query(`alter table words rename column accepted_meanings to accepted_meanings_off`);
     try {
-      // 홈 · 테스트 화면이 죽지 않는다 (뜻 열을 to_jsonb 로 읽는다)
-      for (const path of ["/", "/test", "/study"]) {
+      // 홈 · 테스트 화면이 죽지 않는다 (뜻 열 · 더한 뜻 열을 to_jsonb 로 읽는다)
+      for (const path of ["/", "/test", "/study", "/words"]) {
         const res = await page.goto(path);
         expect(res?.status(), path).toBe(200);
         await expect(page.getByText("설정이 필요합니다"), path).toHaveCount(0);
       }
+
+      // 단어 목록에서 다른 칸을 고쳐도 저장된다 — 더한 뜻 열이 없어도 그 열은 건드리지 않는다
+      await page.getByRole("button", { name: "環境" }).click();
+      await page.getByLabel("뜻", { exact: true }).fill("환경·주변");
+      await page.getByRole("button", { name: "저장", exact: true }).click();
+      await expect(page.getByRole("heading", { name: "단어 수정" })).toBeHidden();
+      expect(await meaningOf("環境")).toBe("환경·주변");
       await page.goto("/test");
       await expect(surfaceOf(page)).toBeVisible();
 

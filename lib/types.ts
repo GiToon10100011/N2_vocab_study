@@ -31,6 +31,11 @@ export interface Word {
   streak: number;
   last_wrong_type: PromptType | null;
   suspended: boolean;
+  /**
+   * 실전 테스트의 「이것도 정답」으로 더한 뜻(쉼표 목록). 채점에만 쓰고 복습 카드에는 싣지 않는다(QueueWord 에 없다).
+   * 열이 아직 없는 DB 에서는 null 이다.
+   */
+  accepted_meanings?: string | null;
 }
 
 /** SRS 판정에 필요한 최소 필드. 순수 함수 테스트를 쉽게 하기 위해 따로 뽑았다. */
@@ -101,6 +106,8 @@ export interface TestQuestion {
   surface: string;
   reading: string;
   meaning_ko: string;
+  /** 「이것도 정답」으로 더한 뜻. 뜻을 채점할 때 meaning_ko 뒤에 이어 붙인다. 화면에는 그리지 않는다. */
+  acceptedMeanings?: string | null;
 }
 
 /** 이미 답한 문제. 이어서 푼 테스트의 끝 화면에 전체를 보여 주려고 서버가 함께 준다. */

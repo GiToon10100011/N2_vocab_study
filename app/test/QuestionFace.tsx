@@ -6,7 +6,7 @@ export type Verdict = { correct: boolean; blocks: DiffBlock[] } | null;
 
 /**
  * 뜻을 낸 뒤의 결과. credit: 1 정답, 0.5 부분 정답, 0 오답. typed 는 친 뜻이다.
- * accepted: 「이것도 정답」으로 친 뜻을 뜻 목록에 더하고 정답으로 바꿨다(credit 은 1).
+ * accepted: 「이것도 정답」으로 친 뜻을 정답으로 인정했다(credit 은 1). 단어의 뜻(meaning_ko)은 그대로다.
  */
 export type MeaningVerdict = { credit: 0 | 0.5 | 1; typed: string; accepted?: boolean } | null;
 
@@ -72,7 +72,7 @@ export function QuestionFace({
 
 /**
  * 뜻 판정 줄. 윗줄에 맞음 · 부분 정답 · 틀림, 정답이 아니면 아랫줄에 내 답(정답 뜻은 위 문제 칸에 나와 있다).
- * 「이것도 정답」을 눌렀으면 윗줄은 정답으로 쳤다는 것, 아랫줄은 뜻 목록에 더한 낱말이다.
+ * 「이것도 정답」을 눌렀으면 윗줄은 정답으로 쳤다는 것, 아랫줄은 인정한 낱말이다.
  */
 export function MeaningVerdictLine({ verdict }: { verdict: NonNullable<MeaningVerdict> }) {
   const tone = verdict.credit === 1 ? "text-accent" : verdict.credit === 0.5 ? "text-warn" : "text-danger";
@@ -91,7 +91,7 @@ export function MeaningVerdictLine({ verdict }: { verdict: NonNullable<MeaningVe
       </p>
       {verdict.accepted && (
         <p className="max-w-full truncate text-base">
-          <span className="text-muted">뜻에 더함 </span>
+          <span className="text-muted">인정한 뜻 </span>
           {verdict.typed}
         </p>
       )}

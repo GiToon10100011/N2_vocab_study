@@ -196,7 +196,7 @@ test.describe("단어 목록", () => {
     await page.getByRole("button", { name: "協力" }).click();
 
     await expect(page.getByRole("heading", { name: "단어 수정" })).toBeVisible();
-    const meaning = page.locator('input[lang="ko"]');
+    const meaning = page.getByLabel("뜻", { exact: true });
     await meaning.fill("협력·협조");
     await page.getByRole("button", { name: "저장", exact: true }).click();
 
@@ -206,6 +206,34 @@ test.describe("단어 목록", () => {
     page.once("dialog", (d) => d.accept());
     await page.getByRole("button", { name: "삭제" }).first().click();
     await expect(page.getByText("협력·협조")).toBeHidden();
+  });
+
+  test("더한 뜻은 목록에 안 보이고 수정 창에서만 보인다 — 뜻만 고치면 그대로이고, 비우면 지워진다", async ({ page }) => {
+    const accepted = async () =>
+      (await sql().query(`select meaning_ko, accepted_meanings from words where surface = '協力'`)) as {
+        meaning_ko: string;
+        accepted_meanings: string | null;
+      }[];
+    await sql().query(`update words set accepted_meanings = '협조' where surface = '協力'`);
+
+    await page.goto("/words");
+    await expect(page.locator("main")).not.toContainText("협조"); // 목록에는 단어의 뜻만 나온다
+    await page.getByRole("button", { name: "協力" }).click();
+    const field = page.getByLabel("정답으로만 인정하는 뜻");
+    await expect(field).toHaveValue("협조");
+
+    // 뜻만 고치면 더한 뜻은 그대로다
+    await page.getByLabel("뜻", { exact: true }).fill("협력·협동");
+    await page.getByRole("button", { name: "저장", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "단어 수정" })).toBeHidden();
+    expect(await accepted()).toEqual([{ meaning_ko: "협력·협동", accepted_meanings: "협조" }]);
+
+    // 비우면 지워진다(잘못 눌러 더한 뜻을 되돌리는 길)
+    await page.getByRole("button", { name: "協力" }).click();
+    await page.getByLabel("정답으로만 인정하는 뜻").fill("");
+    await page.getByRole("button", { name: "저장", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "단어 수정" })).toBeHidden();
+    expect(await accepted()).toEqual([{ meaning_ko: "협력·협동", accepted_meanings: null }]);
   });
 });
 

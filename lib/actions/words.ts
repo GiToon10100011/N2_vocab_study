@@ -79,10 +79,20 @@ export type UpdateWordResult =
   | { ok: true; word: Word }
   | { ok: false; reason: "invalid" | "duplicate" | "missing" };
 
+/** 「이것도 정답」으로 더한 뜻 목록의 최대 길이. 목록이 끝없이 불어나 판정이 느려지는 것을 막는다. */
+const MAX_ACCEPTED = 300;
+
 export async function updateWordAction(
   id: string,
   /** study_day 가 비어 있으면 기존 학습일을 그대로 둔다(세션 중 수정에서 쓴다). */
-  patch: { surface: string; reading: string; meaning_ko: string; study_day: string },
+  patch: {
+    surface: string;
+    reading: string;
+    meaning_ko: string;
+    study_day: string;
+    /** 「이것도 정답」으로 더한 뜻(쉼표 목록). 없으면 건드리지 않고, 빈 문자열이면 비운다. */
+    accepted_meanings?: string;
+  },
 ): Promise<UpdateWordResult> {
   const surface = patch.surface.trim();
   // 가나 전용 단어는 읽기가 표기와 같을 수밖에 없다. 목록에서도 같은 규칙을 적용한다.
@@ -90,7 +100,11 @@ export async function updateWordAction(
   const meaning = patch.meaning_ko.trim();
   const day = /^\d{4}-\d{2}-\d{2}$/.test(patch.study_day) ? patch.study_day : null;
 
+  const accepted =
+    patch.accepted_meanings === undefined ? undefined : patch.accepted_meanings.replace(/\s+/g, " ").trim() || null;
+
   if (!surface || !reading || !meaning) return { ok: false, reason: "invalid" };
+  if (accepted && accepted.length > MAX_ACCEPTED) return { ok: false, reason: "invalid" };
 
   try {
     const word = await updateWordRow(id, {
@@ -98,6 +112,7 @@ export async function updateWordAction(
       reading,
       meaning_ko: meaning,
       study_day: day,
+      ...(accepted === undefined ? {} : { accepted_meanings: accepted }),
     });
     return word ? { ok: true, word } : { ok: false, reason: "missing" };
   } catch (err) {
